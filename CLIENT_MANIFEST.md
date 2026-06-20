@@ -151,3 +151,35 @@ single biggest chunk.
 Phase 1 of the spine: convert the one-shot login into a persistent,
 IndexedDB-backed, continuously-syncing session that survives a refresh — built
 on the working OIDC flow already in `App.tsx`. Everything else stacks on that.
+
+---
+
+## STATUS UPDATE (2026-06-20)
+
+**Phase 1 COMPLETE** — spine: OIDC login via MAS, persistent session, IndexedDB
+sync store, silent token refresh. Committed to GitHub (`sabertrtr/technetium`,
+root commit `352e50b`). Project renamed `matrix-client` -> `technetium`.
+
+**Phase 2 IN PROGRESS** — Discord-shaped UI.
+- 2.1 done: Compound installed + wired (tokens + fonts in `main.tsx`).
+- 2.2 done: `ClientProvider` (React context) holds the live client; `useClient()`
+  hook; `App.tsx` thinned to a status-driven shell.
+- 2.3 next: unified spaces>subspaces>rooms nav tree.
+
+**Dependencies now INSTALLED** (were planned in §4):
+- `@vector-im/compound-web@^9.4.1`
+- `@vector-im/compound-design-tokens@^10.2.2`
+- `@fontsource/inter@^5.2.8`, `@fontsource/inconsolata@^5.2.8`
+- (`matrix-js-sdk@41.6.0` already present; crypto-wasm rides along, not pinned)
+
+`dompurify` / `@matrix-org/matrix-wysiwyg` still deferred to later phases.
+
+**FOURIER EXTRACTION FLAG:** `session.ts` + `tokenRefresher.ts` + the login flow
+form a reusable browser-side "auth against MAS + hold a Matrix session + silent
+refresh" library — the client-side counterpart to planned **fourier-passport**.
+Kept inside Technetium for now; modules deliberately free of client-specific deps
+so a later lift is a move, not a rewrite.
+
+**Dev server:** runs in a persistent `tmux` session (`vite`) on vesper; port 5173
+forwarded manually via VS Code PORTS tab (tmux decouples it from VS Code's
+auto-forward).

@@ -125,3 +125,68 @@ fonts), then build the unified left-nav tree. Confirmed React 19.2.6 satisfies C
 peer range. Also pending: move from one-shot sync to a living client surfaced via context
 + live event listeners (currently the client is built and synced but not retained in app
 state beyond the room-name snapshot).
+
+---
+
+## Phase 2 — Discord-shaped UI (IN PROGRESS)
+
+Goal: unified, compact spaces>subspaces>rooms left nav, always-open member list,
+inverted thread/channel layout, relocated typing indicators. First: Compound
+foundation + living-client context, then the nav tree.
+
+Dev-server note: Vite now runs in a persistent `tmux` session on vesper
+(`tmux new-session -d -s vite '...npm run dev -- --host 127.0.0.1'`), so it
+survives SSH/VS Code disconnects. Trade-off: VS Code no longer auto-forwards
+5173 — forward it manually via the PORTS tab (one-time, persists per workspace).
+Attach: `tmux attach -t vite`; detach: Ctrl+b then d.
+
+### Step 2.1 — Compound foundation wired
+(status: done)
+
+Installed `@vector-im/compound-web@9.4.1`, `@vector-im/compound-design-tokens@10.2.2`,
+`@fontsource/inter@5`, `@fontsource/inconsolata@5`. `main.tsx` imports (once, before
+render): the all-in-one tokens CSS
+(`@vector-im/compound-design-tokens/assets/web/css/compound-design-tokens.css` —
+pulls in light/dark/HC themes + prefers-color-scheme switching), Inter weights
+400/500/600/700, and Inconsolata 400.
+
+Verified: page renders clean, no import errors;
+`--cpd-color-bg-canvas-default` resolves to `#101317` (dark-theme canvas) — tokens live.
+
+### Step 2.2 — living client in React context
+(status: in progress)
+
+2.2a (done): `src/client/ClientContext.tsx` — `ClientProvider` owns the full client
+lifecycle (status: starting -> awaiting_login -> syncing -> ready | error), holds the
+MatrixClient in state, and exposes it via the `useClient()` hook. All auth logic
+(completeLogin/resumeSession/login/logout) moved here from App.tsx. Not yet wired
+(nothing imports it) — App.tsx refactor is 2.2b.
+
+2.2b (done): `main.tsx` wraps `<App/>` in `<ClientProvider>`; `App.tsx` gutted to a
+thin status-driven shell (render by ClientStatus: starting/awaiting_login/syncing/
+ready/error), consuming `useClient()`. All auth logic removed from App. Added a logout
+button (provider exposes `logout`). Login screen simplified — no homeserver field
+(provider defaults to https://41chan.net); can re-add multi-homeserver later.
+
+Verified: resume (reload -> room list), logout (-> login screen), and fresh login
+(-> MAS -> room list) all work through the provider. Living client now in context;
+App ~230 lines -> ~80. Foundation ready for the nav tree.
+
+Step 2.2 COMPLETE.
+
+**FOURIER EXTRACTION FLAG:** the auth primitives — `session.ts`, `tokenRefresher.ts`,
+and the login/discovery/exchange logic — together form a complete "authenticate a
+browser app against MAS + hold a Matrix-capable session + silent refresh" library,
+with zero Technetium-specific logic. This is the client-side counterpart to the planned
+**fourier-passport** ("unified MAS-backed identity"). Every future Fourier web frontend
+(booru login, tooling) needs the same capability. DECISION: keep building it inside
+Technetium for now (prove it in one consumer first), but keep these modules free of
+client-specific deps so a later lift into a `fourier-passport-web` package is a move,
+not a rewrite. `ClientContext.tsx` itself stays in the client (React glue); the
+primitives beneath it are the reusable surface.
+
+### Step 2.3 — unified nav tree (spaces > subspaces > rooms)
+(status: next)
+The "image-2 target": one compact left panel showing the full hierarchy. First
+real Compound-based UI. Will read the space hierarchy from the live client
+(m.space.child state) and subscribe to room-list events for live updates.
