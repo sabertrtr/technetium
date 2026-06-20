@@ -188,7 +188,50 @@ not a rewrite. `ClientContext.tsx` itself stays in the client (React glue); the
 primitives beneath it are the reusable surface.
 
 ### Step 2.3 — unified nav tree (spaces > subspaces > rooms)
+(status: in progress)
+The "image-2 target": one compact left panel showing the full hierarchy.
+
+2.3a (done): `src/client/spaces.ts` — `buildNavTree(client)` returns
+`{ spaces, orphanRooms }`. Reads joined rooms + `m.space.child` state; identifies
+top-level spaces (not parented by another space), recurses into subspaces/rooms,
+sorts by the `order` field (stable manual ordering — fixes Element auto-shuffle),
+guards cycles, skips removed/unsynced children. Verified against live hierarchy:
+41chan -> 5 subspaces (chrestai/degenerative/generative/get help/technetai),
+CUTE AND FUNNY top-level, DMs as orphanRooms. TEMP `window.mxClient` added to App.tsx
+for console verification (remove after 2.3b).
+
+2.3b (done): `src/ui/NavTree.tsx` — recursive `TreeRow` renders the full hierarchy
+with depth indentation; spaces marked bold with a marker, rooms clickable via an
+`onSelectRoom` callback; orphans under a "Direct & other" heading. `App.tsx` ready
+view restructured into a two-pane layout (260px nav sidebar | main area), with a
+`selectedRoom` state and a timeline placeholder on the right. TEMP `window.mxClient`
+debug line removed. Verified: full nesting renders (rooms under subspaces under
+41chan), room click selects + shows name on the right. (Noted in passing: a `/sync`
+401 fired mid-session and was silently recovered by the token refresher — confirms
+refresh works on an active session, not just at startup.)
+
+2.3c (done): `NavTree.tsx` rewritten — collapsible (per-session `Set` of collapsed
+space ids, default expanded, marker flips ▾/▸), compact (24px rows, fontSize 13),
+and styled with Compound tokens (text-primary/secondary, bg-subtle-secondary hover,
+bg-action-primary-rest selection). `App.tsx` passes `selectedRoomId` for highlight.
+Verified on live data: full 41chan hierarchy + CUTE AND FUNNY + DIRECT & OTHER render
+compact and themed; collapse/expand works; room selection highlights. (Polish notes
+for later: selection color a bit loud; could use a subtler selected-state token.)
+
+2.3d (done): `src/client/useNavTree.ts` — hook that builds the tree and rebuilds it
+on `ClientEvent.Room`, `ClientEvent.DeleteRoom`, `RoomEvent.Name`,
+`RoomEvent.MyMembership`, and `RoomStateEvent.Events` (covers m.space.child). Rebuilds
+are debounced 200ms so event bursts coalesce; listeners + timer cleaned up on unmount.
+`NavTree.tsx` swapped from one-shot `useMemo(buildNavTree)` to `useNavTree(client)`.
+Verified passive: tree renders + collapse/select unchanged, no console errors. Active
+(update-from-another-client) deferred to natural occurrence.
+
+**Step 2.3 COMPLETE** — unified spaces>subspaces>rooms nav tree: live, collapsible,
+compact, themed. The "image-2 target" is real. New files: `src/client/spaces.ts`,
+`src/client/useNavTree.ts`, `src/ui/NavTree.tsx`.
+
+### Step 2.4 — read-only timeline
 (status: next)
-The "image-2 target": one compact left panel showing the full hierarchy. First
-real Compound-based UI. Will read the space hierarchy from the live client
-(m.space.child state) and subscribe to room-list events for live updates.
+Clicking a room shows its messages. Needs: scrollback (paginate), event rendering
+(m.room.message types), and dompurify before any HTML rendering. First consumer of
+the selectedRoom state the nav tree already feeds.

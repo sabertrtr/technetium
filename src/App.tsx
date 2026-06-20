@@ -1,10 +1,14 @@
+import { useState } from 'react'
+import type { Room } from 'matrix-js-sdk'
 import { useClient } from './client/ClientContext'
+import { NavTree } from './ui/NavTree'
 
 // Thin shell: render purely by client lifecycle status. All auth/client logic
-// lives in ClientProvider; App just reflects the current phase and (later)
-// mounts the real UI when ready.
+// lives in ClientProvider; App reflects the current phase and, when ready,
+// mounts the two-pane layout (nav tree + main area).
 function App() {
-  const { status, error, userId, login, logout, client } = useClient()
+  const { status, error, userId, login, logout } = useClient()
+  const [selectedRoom, setSelectedRoom] = useState<Room | null>(null)
 
   if (status === 'starting') {
     return <Centered>Starting…</Centered>
@@ -39,25 +43,46 @@ function App() {
     return <Centered>Syncing…</Centered>
   }
 
-  // status === 'ready'
-  const rooms = client?.getRooms() ?? []
+  // status === 'ready' — two-pane layout: nav tree | main area.
   return (
-    <div style={{ maxWidth: 480, margin: '4rem auto', fontFamily: 'sans-serif' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1>Technetium</h1>
-        <button type="button" onClick={logout}>
-          Log out
-        </button>
-      </div>
-      <p>
-        Logged in as <strong>{userId}</strong>
-      </p>
-      <h2>Rooms ({rooms.length})</h2>
-      <ul>
-        {rooms.map((r) => (
-          <li key={r.roomId}>{r.name || r.roomId}</li>
-        ))}
-      </ul>
+    <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif' }}>
+      <aside
+        style={{
+          width: 260,
+          flexShrink: 0,
+          borderRight: '1px solid rgba(128,128,128,0.25)',
+          overflowY: 'auto',
+          padding: '8px 4px',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '4px 8px 8px',
+          }}
+        >
+          <strong>{userId}</strong>
+          <button type="button" onClick={logout} style={{ fontSize: 12 }}>
+            Log out
+          </button>
+        </div>
+        <NavTree selectedRoomId={selectedRoom?.roomId} onSelectRoom={setSelectedRoom} />
+      </aside>
+
+      <main style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+        {selectedRoom ? (
+          <>
+            <h2>{selectedRoom.name || selectedRoom.roomId}</h2>
+            <p style={{ opacity: 0.6 }}>
+              Timeline goes here (a later phase). Room id: {selectedRoom.roomId}
+            </p>
+          </>
+        ) : (
+          <p style={{ opacity: 0.6 }}>Select a room from the left.</p>
+        )}
+      </main>
     </div>
   )
 }
