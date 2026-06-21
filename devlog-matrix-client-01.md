@@ -365,3 +365,32 @@ NOVEL FEATURE — context-aware honorifics:
 
 Technetium now has the full three-column Discord shape: nav tree | timeline +
 composer | member list.
+
+---
+
+## KNOWN BUG (open, deferred to next session) — honorific dim in ROOM mode
+
+Symptom: in **Room** mode, a member's honorific (~/@/+) still renders at FULL
+strength even in rooms where that authority does NOT apply. The name/row dims
+correctly; the honorific badge does not recede as intended.
+
+Expected: honorific IDENTITY (the badge shown) = highest power across the space;
+honorific VISUAL STRENGTH should follow power in the CURRENTLY-VIEWED room — full
+vivid tier color when authority is "here", muted/dimmed when "elsewhere".
+
+Where to look:
+- `src/ui/MemberList.tsx`, `MemberRow`. The `dimmed` calc for `mode === 'room'`
+  is `honorificFor(plHere) !== identityHonor`. Note: in Room mode, the list is
+  ALREADY filtered to members present in the room (powerByRoom has this room),
+  so `plHere` is their actual PL here. Suspect: the dim/color logic isn't firing
+  for the honorific specifically, OR the All·-mode fix (honorColor -> secondary
+  when dimmed) isn't taking effect in Room mode, OR `dimmed` is computing false
+  when it should be true (e.g. a user who is + in room A and ALSO default in
+  room B should dim in B — verify honorificFor(plHere) actually differs from
+  identityHonor in that case).
+- Likely a logic bug in the Room-mode branch, not the rendering: re-check that
+  `plHere` and `identityHonor` produce the intended mismatch, and that the
+  honorColor ternary (dimmed ? secondary : tier) is reached.
+
+Repro: view a room where a known +/@ user is present but NOT powered; their badge
+shows full color instead of dimmed.
