@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Room } from 'matrix-js-sdk'
 import { useClient } from './client/ClientContext'
 import { NavTree } from './ui/NavTree'
+import { Timeline } from './ui/Timeline'
 
 // Thin shell: render purely by client lifecycle status. All auth/client logic
 // lives in ClientProvider; App reflects the current phase and, when ready,
@@ -10,17 +11,13 @@ function App() {
   const { status, error, userId, login, logout } = useClient()
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null)
 
-  if (status === 'starting') {
-    return <Centered>Starting…</Centered>
-  }
+  if (status === 'starting') return <Centered>Starting…</Centered>
 
   if (status === 'awaiting_login') {
     return (
       <Centered>
         <h1>Technetium</h1>
-        <button type="button" onClick={() => login()}>
-          Log in with Matrix
-        </button>
+        <button type="button" onClick={() => login()}>Log in with Matrix</button>
       </Centered>
     )
   }
@@ -32,16 +29,12 @@ function App() {
         <p style={{ color: 'var(--cpd-color-text-critical-primary, #d22)' }}>
           {error ?? 'Something went wrong.'}
         </p>
-        <button type="button" onClick={() => login()}>
-          Try again
-        </button>
+        <button type="button" onClick={() => login()}>Try again</button>
       </Centered>
     )
   }
 
-  if (status === 'syncing') {
-    return <Centered>Syncing…</Centered>
-  }
+  if (status === 'syncing') return <Centered>Syncing…</Centered>
 
   // status === 'ready' — two-pane layout: nav tree | main area.
   return (
@@ -64,23 +57,29 @@ function App() {
           }}
         >
           <strong>{userId}</strong>
-          <button type="button" onClick={logout} style={{ fontSize: 12 }}>
-            Log out
-          </button>
+          <button type="button" onClick={logout} style={{ fontSize: 12 }}>Log out</button>
         </div>
         <NavTree selectedRoomId={selectedRoom?.roomId} onSelectRoom={setSelectedRoom} />
       </aside>
 
-      <main style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {selectedRoom ? (
           <>
-            <h2>{selectedRoom.name || selectedRoom.roomId}</h2>
-            <p style={{ opacity: 0.6 }}>
-              Timeline goes here (a later phase). Room id: {selectedRoom.roomId}
-            </p>
+            <header
+              style={{
+                padding: '10px 16px',
+                borderBottom: '1px solid rgba(128,128,128,0.25)',
+                fontWeight: 600,
+              }}
+            >
+              {selectedRoom.name || selectedRoom.roomId}
+            </header>
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <Timeline room={selectedRoom} />
+            </div>
           </>
         ) : (
-          <p style={{ opacity: 0.6 }}>Select a room from the left.</p>
+          <div style={{ padding: 24, opacity: 0.6 }}>Select a room from the left.</div>
         )}
       </main>
     </div>

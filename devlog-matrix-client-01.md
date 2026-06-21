@@ -231,7 +231,34 @@ compact, themed. The "image-2 target" is real. New files: `src/client/spaces.ts`
 `src/client/useNavTree.ts`, `src/ui/NavTree.tsx`.
 
 ### Step 2.4 — read-only timeline
-(status: next)
-Clicking a room shows its messages. Needs: scrollback (paginate), event rendering
-(m.room.message types), and dompurify before any HTML rendering. First consumer of
-the selectedRoom state the nav tree already feeds.
+(status: in progress)
+
+2.4a (done): `src/client/useTimeline.ts` — `useTimeline(client, room)` returns
+`{ items, loadOlder, loadingOlder, atStart }`. Reads `room.getLiveTimeline().getEvents()`,
+classifies each (message/encrypted/redacted/other), subscribes to `RoomEvent.Timeline`
+for live appends, and `loadOlder()` calls `client.scrollback(room, 30)` (detects
+start-of-room when no new events return). Returns raw MatrixEvents + kind; renderer owns
+presentation.
+
+2.4b (done): `src/ui/Timeline.tsx` — renders rows (time / sender / body) by kind:
+message = PLAINTEXT body only (no HTML yet), encrypted = "🔒" placeholder (crypto is a
+later phase), redacted = "(message deleted)", other = "[type]". Scrollback button +
+auto-scroll-to-newest. `App.tsx` main pane mounts `<Timeline room={selectedRoom}>` with
+a room-name header, replacing the placeholder. Verified: clicking rooms shows messages;
+encrypted rooms show the lock placeholder (no breakage); scrollback loads older.
+Confirmed NO HTML rendering (no formatted_body/innerHTML) — that is 2.4c with dompurify.
+
+2.4c (done): installed `dompurify.4.11`. `src/client/messageBody.ts` —
+`renderMessageBody(event)` sanitizes `formatted_body` (org.matrix.custom.html) via
+DOMPurify with a STRICT allowlist (formatting/link/code/list/table tags only; no
+script/iframe/style/on*; DOMPurify drops javascript: URIs), falling back to plaintext
+when no formatted_body. `Timeline.tsx` renders sanitized HTML via
+dangerouslySetInnerHTML (safe — already sanitized) for message kind. Verified: bold/
+italics/links render in unencrypted rooms; plain messages unaffected. TEMP window.mxClient
+debug removed from App.tsx.
+
+**Step 2.4 COMPLETE** — read-only timeline: live events, scrollback, classified
+rendering (message/encrypted/redacted/other), sanitized rich text. New files:
+`src/client/useTimeline.ts`, `src/client/messageBody.ts`, `src/ui/Timeline.tsx`.
+
+2.4d (deferred/optional): polish — sender grouping, avatars, day separators.

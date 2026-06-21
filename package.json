@@ -14,12 +14,14 @@
     "@fontsource/inter": "^5.2.8",
     "@vector-im/compound-design-tokens": "^10.2.2",
     "@vector-im/compound-web": "^9.4.1",
+    "dompurify": "^3.4.11",
     "matrix-js-sdk": "^41.6.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/dompurify": "^3.0.5",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
