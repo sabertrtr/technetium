@@ -15,6 +15,7 @@
     "@vector-im/compound-design-tokens": "^10.2.2",
     "@vector-im/compound-web": "^9.4.1",
     "dompurify": "^3.4.11",
+    "marked": "^18.0.5",
     "matrix-js-sdk": "^41.6.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"

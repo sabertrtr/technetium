@@ -1,10 +1,12 @@
 import { useState, useRef, type KeyboardEvent } from 'react'
 import type { Room } from 'matrix-js-sdk'
 import { useClient } from '../client/ClientContext'
+import { formatMessage } from '../client/messageFormat'
 
-// Plain-text message composer pinned to the bottom of a room view. Enter sends,
-// Shift+Enter inserts a newline. Sent messages appear in the timeline via the
-// live RoomEvent.Timeline subscription (no manual insertion needed).
+// Message composer pinned to the bottom of a room view. Enter sends, Shift+Enter
+// inserts a newline. Markdown is converted to sanitized HTML and sent via
+// sendHtmlMessage when it actually produces formatting; otherwise plain text.
+// Sent messages appear in the timeline via the live RoomEvent.Timeline subscription.
 export function Composer({ room }: { room: Room }) {
   const { client } = useClient()
   const [text, setText] = useState('')
@@ -12,15 +14,20 @@ export function Composer({ room }: { room: Room }) {
   const taRef = useRef<HTMLTextAreaElement | null>(null)
 
   const send = async () => {
-    const body = text.trim()
-    if (!body || !client || sending) return
+    const input = text.trim()
+    if (!input || !client || sending) return
     setSending(true)
     setText('') // optimistic clear; restore on failure
     try {
-      await client.sendTextMessage(room.roomId, body)
+      const { plain, html } = formatMessage(input)
+      if (html !== undefined) {
+        await client.sendHtmlMessage(room.roomId, plain, html)
+      } else {
+        await client.sendTextMessage(room.roomId, plain)
+      }
     } catch (err) {
       console.error('Send failed:', err)
-      setText(body) // put the text back so it isn't lost
+      setText(input) // put the text back so it isn't lost
     } finally {
       setSending(false)
       taRef.current?.focus()

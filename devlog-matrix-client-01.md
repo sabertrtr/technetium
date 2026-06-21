@@ -272,9 +272,63 @@ Verified: type + Enter sends and the message appears in the timeline; Shift+Ente
 
 **Technetium is now a usable client** — login, navigate spaces>rooms, read formatted history, and send messages. The core chat loop is closed.
 
-Next candidates:
-- 2.6 formatted send (markdown -> sendHtmlMessage), 
+### Step 2.6 — formatted (markdown) sending
+(status: done)
+
+Installed `marked@18`. `src/client/messageFormat.ts` — `formatMessage(input)` runs
+`parseInline` (no block <p> wrap, breaks:true), sanitizes the output with the SAME
+strict DOMPurify allowlist as the receive side (marked passes raw HTML through by
+default, so sanitizing before send is required), and decides plain-vs-HTML by comparing
+the sanitized HTML against an HTML-escaped version of the input — so escaping alone
+(a < b) does NOT falsely trigger formatted send. Composer sends `sendHtmlMessage` when
+formatting is present, else `sendTextMessage`. Verified: bold/italic/code/links render
+after sending; plain stays plain. Read/write formatting is now symmetric.
+
+Remaining candidates:
 - room header polish (topic, member count),
 - read receipts / unread markers,
 - image upload + the planned client-side md5 dedup (ties into the booru pipeline),
 - encryption phase (for encrypted-room support).
+
+---
+
+## FUTURE IDEAS (captured 2026-06-21, not scheduled)
+
+### Technetium UX — extreme customizability
+- Settings menu shows a LIVE MOCKUP UI that updates as the user changes options
+  (see your choices reflected immediately).
+- Granular sliders: distance between messages, avatar size, timestamp format +
+  position, etc.
+- Space/room names user-customizable via right-click -> "Customize name" (local
+  override of the display name; does not change the room's actual name for others).
+
+### fourier-resonance (new Fourier component concept)
+A "value / combination-of-values" organizer. Two layers:
+
+1. Explicit rules + general "vibes" as a preference store:
+   - Explicit: "always default to private", "dark mode whenever possible",
+     "accept only strictly-required cookies then purge ASAP", "randomize
+     username/password whenever possible".
+   - Vibes: fuzzy preferences applied where no explicit rule exists.
+   - Open: password-manager integration (1Password? Bitwarden/Vaultwarden already
+     in the stack via fourier-envelope) for the randomize-credentials behavior.
+
+2. Right-click "Copy Color / Copy Size / Copy Vibe" (+ Paste variants):
+   - Resonance copies the INTRINSIC values of an element, decomposed into
+     predefined/user-defined categories logged in a "data matrix".
+   - Context-aware options: right-click text -> Color/Size/Kerning/Font/...;
+     right-click a background image -> image-relevant options. The browser knows
+     the element type, so the option set maps to the element.
+   - Map presets to other elements directly or via translation between systems.
+
+3. "Configuration force field" — portable preferences the user carries to new
+   sites:
+   - On visiting a new site, (auto or on request) scan/research the site's full
+     settings tree (with or without AI assistance).
+   - Map the user's presets as closely as possible onto that site's actual
+     settings.
+   - Show the user visually: which settings were DIRECTLY mapped, which were
+     MISSED, which were filled via "vibes" (pre-set prompts).
+
+Note: this is a large, ambitious, mostly-separate product idea from Technetium —
+captured here so it isn't lost; belongs in its own design space when revisited.
