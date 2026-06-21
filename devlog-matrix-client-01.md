@@ -332,3 +332,36 @@ A "value / combination-of-values" organizer. Two layers:
 
 Note: this is a large, ambitious, mostly-separate product idea from Technetium —
 captured here so it isn't lost; belongs in its own design space when revisited.
+
+### Step 2.7 — member list (composable, context-aware honorifics)
+(status: done)
+
+A pluggable member-source system, not a single aggregator — so a future Discord
+source (mapping Discord users to Matrix identities, if the user allows) drops in
+as a provider, not a rewrite.
+
+Files:
+- `src/client/members.ts` — `Honorific` (~ PL100 owner, @ PL50 op/mod, + PL25
+  voice placeholder), `MergedMember` {id, displayName, avatarMxc, sources[],
+  powerByRoom{}}, `MemberSource` interface, `maxPower()`, `createMatrixSpaceSource`.
+  KEY RULE: space-structured rooms confer power+presence; orphan rooms (DMs/
+  direct-joins) record presence ONLY — DMs default both members to PL100, which
+  was inflating everyone to ~. Honorifics now reflect real channel authority.
+- `src/client/useMembers.ts` — merges sources by identity (combines sources[] +
+  powerByRoom{}), debounced 250ms refresh, source-array-ready for future providers.
+- `src/ui/MemberList.tsx` — 220px right panel, third column. Three modes:
+  Room / All / All· (all-with-current-room-highlighted). Alphabetical sort (PLs
+  carried for future honorific-sort + pull-~@+-to-top).
+
+NOVEL FEATURE — context-aware honorifics:
+  honorific IDENTITY = member's highest power across the space (what badge).
+  honorific VISUAL STRENGTH = power in the CURRENTLY-VIEWED room.
+  Full vivid tier color when authority is "here"; dimmed grey (name + badge
+  together) when "elsewhere" — "I'm important, just not in this room."
+  In All· mode, members present in the current room are emphasized, rest dimmed.
+  No true server-wide list (would need privileged admin access — declined as
+  wrong for a client). "All" = everyone the client personally knows about,
+  space-scoped (mirrors nav-tree population).
+
+Technetium now has the full three-column Discord shape: nav tree | timeline +
+composer | member list.

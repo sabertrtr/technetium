@@ -4,10 +4,11 @@ import { useClient } from './client/ClientContext'
 import { NavTree } from './ui/NavTree'
 import { Timeline } from './ui/Timeline'
 import { Composer } from './ui/Composer'
+import { MemberList } from './ui/MemberList'
 
 // Thin shell: render purely by client lifecycle status. All auth/client logic
 // lives in ClientProvider; App reflects the current phase and, when ready,
-// mounts the two-pane layout (nav tree + main area).
+// mounts the three-pane layout (nav tree | timeline+composer | member list).
 function App() {
   const { status, error, userId, login, logout } = useClient()
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null)
@@ -37,7 +38,7 @@ function App() {
 
   if (status === 'syncing') return <Centered>Syncing…</Centered>
 
-  // status === 'ready' — two-pane layout: nav tree | main area.
+  // status === 'ready' — three-pane layout.
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif' }}>
       <aside
@@ -84,6 +85,8 @@ function App() {
           <div style={{ padding: 24, opacity: 0.6 }}>Select a room from the left.</div>
         )}
       </main>
+
+      <MemberList room={selectedRoom} />
     </div>
   )
 }
