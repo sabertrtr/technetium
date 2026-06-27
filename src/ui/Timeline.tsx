@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ThreadEvent, type Room, type MatrixEvent } from 'matrix-js-sdk'
 import { useClient } from '../client/ClientContext'
-import { useTimeline, type TimelineItem } from '../client/useTimeline'
+import { useTimeline, type TimelineItem, type GalleryLayout } from '../client/useTimeline'
 import { renderMessageBody } from '../client/messageBody'
 import { parseMxc } from '../client/media'
 import { AuthedImage } from './AuthedImage'
@@ -56,7 +56,7 @@ export function Timeline({ room, onOpenThread }: { room: Room; onOpenThread?: (r
 }
 
 export function Row({ item, onOpenThread }: { item: TimelineItem; onOpenThread?: (roomId: string, rootId: string) => void }) {
-  const { event, kind } = item
+  const { event, kind, cells, layout } = item
   const sender = event.getSender() ?? '(unknown)'
   const time = new Date(event.getTs()).toLocaleTimeString([], {
     hour: '2-digit',
@@ -64,7 +64,9 @@ export function Row({ item, onOpenThread }: { item: TimelineItem; onOpenThread?:
   })
 
   let body: React.ReactNode
-  if (kind === 'message') {
+  if (kind === 'gallery' && cells) {
+    body = <GalleryBody cells={cells} layout={layout ?? 'grid'} />
+  } else if (kind === 'message') {
     const content = event.getContent()
     const mxc = typeof content.url === 'string' ? content.url : ''
     if (content.msgtype === 'm.image' && parseMxc(mxc)) {
@@ -129,9 +131,149 @@ export function Row({ item, onOpenThread }: { item: TimelineItem; onOpenThread?:
           marginTop: 1,
         }}
       >
-        <span style={{ fontSize: 14, wordBreak: 'break-word' }}>{body}</span>
+        <div style={{ fontSize: 14, wordBreak: 'break-word', minWidth: 0 }}>{body}</div>
         {event.isThreadRoot && <ThreadChip event={event} onOpen={onOpenThread} />}
       </div>
+    </div>
+  )
+}
+
+// One grid cell: a static "pending upload" graphic as the background, with the
+// thumbnail layered over it (transparentLoading, so the graphic shows through
+// until the real image paints). A null / loading / failed slot shows the graphic.
+function GalleryCell({ ev }: { ev: MatrixEvent | null }) {
+  const c = ev?.getContent()
+  const mxc = c && typeof c.url === 'string' ? c.url : ''
+  const showImg = !!ev && !!parseMxc(mxc)
+  return (
+    <div
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        overflow: 'hidden',
+        background: 'var(--cpd-color-bg-subtle-secondary)',
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'var(--cpd-color-text-secondary)',
+          opacity: 0.4,
+        }}
+      >
+        <svg
+          width="34"
+          height="34"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <circle cx="8.5" cy="8.5" r="1.5" />
+          <path d="M21 15l-5-5L5 21" />
+        </svg>
+      </div>
+      {showImg && (
+        <div style={{ position: 'absolute', inset: 0 }}>
+          <AuthedImage
+            mxc={mxc}
+            width={360}
+            alt={typeof c?.body === 'string' ? c.body : undefined}
+            fill
+            transparentLoading
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Coalesced image batch (net.41chan.gallery). Three sender-chosen layouts:
+//  - grid:  fixed-size square cells arranged by count (2/3 in a row, 4 as 2x2,
+//           5 as a double-height cell on the left + a 2x2 on the right).
+//  - stack: constant total height; N full-width rows split it (fewer = taller).
+//  - strip: constant total width+height; N columns split it (fewer = wider).
+// Cells fill their grid track; all geometry lives here. Caption (index-0) below.
+const GALLERY_CELL = 118 // px square; 3 cols + 2 gaps = 360, matching stack/strip width
+const GALLERY_GAP = 3
+
+function GalleryBody({ cells, layout }: { cells: (MatrixEvent | null)[]; layout: GalleryLayout }) {
+  const n = cells.length
+  const first = cells[0]
+  const fc = first?.getContent()
+  const caption = first && typeof fc?.filename === 'string' ? renderMessageBody(first) : null
+
+  let gridStyle: React.CSSProperties
+  let cellPlacement: (idx: number) => React.CSSProperties = () => ({})
+
+  if (layout === 'stack') {
+    gridStyle = {
+      display: 'grid',
+      gridTemplateColumns: '1fr',
+      gridTemplateRows: `repeat(${n}, 1fr)`,
+      gap: GALLERY_GAP,
+      width: 360,
+      height: 300,
+    }
+  } else if (layout === 'strip') {
+    gridStyle = {
+      display: 'grid',
+      gridTemplateColumns: `repeat(${n}, 1fr)`,
+      gridTemplateRows: '1fr',
+      gap: GALLERY_GAP,
+      width: 360,
+      height: 280,
+    }
+  } else if (n === 5) {
+    gridStyle = {
+      display: 'grid',
+      gridTemplateColumns: `repeat(3, ${GALLERY_CELL}px)`,
+      gridTemplateRows: `repeat(2, ${GALLERY_CELL}px)`,
+      gap: GALLERY_GAP,
+      width: 'max-content',
+    }
+    cellPlacement = (idx) => (idx === 0 ? { gridColumn: '1', gridRow: '1 / span 2' } : {})
+  } else {
+    const cols = n <= 3 ? n : 2
+    gridStyle = {
+      display: 'grid',
+      gridTemplateColumns: `repeat(${cols}, ${GALLERY_CELL}px)`,
+      gridAutoRows: `${GALLERY_CELL}px`,
+      gap: GALLERY_GAP,
+      width: 'max-content',
+    }
+  }
+
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ ...gridStyle, borderRadius: 8, overflow: 'hidden' }}>
+        {cells.map((ev, idx) => (
+          <div
+            key={ev?.getId() ?? `empty-${idx}`}
+            style={{ position: 'relative', minWidth: 0, ...cellPlacement(idx) }}
+          >
+            <GalleryCell ev={ev} />
+          </div>
+        ))}
+      </div>
+      {caption && (
+        <div style={{ fontSize: 14, wordBreak: 'break-word', marginTop: 4 }}>
+          {caption.html !== undefined ? (
+            <span className="tc-message-html" dangerouslySetInnerHTML={{ __html: caption.html }} />
+          ) : (
+            <span>{caption.text}</span>
+          )}
+        </div>
+      )}
     </div>
   )
 }

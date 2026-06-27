@@ -7,12 +7,20 @@ import {
 } from 'matrix-js-sdk'
 
 // Classification the renderer switches on, so it never re-parses event shape.
-export type TimelineItemKind = 'message' | 'encrypted' | 'redacted' | 'other'
+export type TimelineItemKind = 'message' | 'encrypted' | 'redacted' | 'other' | 'gallery'
+
+export type GalleryLayout = 'grid' | 'stack' | 'strip'
 
 export interface TimelineItem {
   event: MatrixEvent
   kind: TimelineItemKind
   id: string
+  // kind 'gallery' only: cells sized to the batch's declared count, with images
+  // placed by their net.41chan.gallery.index. null = a slot whose image hasn't
+  // arrived (pending, failed, or interleaved elsewhere in the timeline).
+  cells?: (MatrixEvent | null)[]
+  // kind 'gallery' only: the sender's chosen layout (defaults to 'grid').
+  layout?: GalleryLayout
 }
 
 function classify(ev: MatrixEvent): TimelineItemKind {
@@ -23,10 +31,81 @@ function classify(ev: MatrixEvent): TimelineItemKind {
   return 'other'
 }
 
+interface GalleryTag {
+  id: string
+  index?: number
+  count?: number
+  layout?: GalleryLayout
+}
+
+// Parse the composer's batch hint off a gallery-tagged m.image, or null.
+function galleryTag(ev: MatrixEvent): GalleryTag | null {
+  if (ev.isRedacted()) return null
+  if (ev.getType() !== 'm.room.message') return null
+  const c = ev.getContent()
+  if (c.msgtype !== 'm.image') return null
+  const g = c['net.41chan.gallery']
+  if (!g || typeof g !== 'object') return null
+  const id = (g as { id?: unknown }).id
+  if (typeof id !== 'string') return null
+  const index = (g as { index?: unknown }).index
+  const count = (g as { count?: unknown }).count
+  const layout = (g as { layout?: unknown }).layout
+  return {
+    id,
+    index: typeof index === 'number' ? index : undefined,
+    count: typeof count === 'number' ? count : undefined,
+    layout:
+      layout === 'grid' || layout === 'stack' || layout === 'strip' ? layout : undefined,
+  }
+}
+
 export function toItems(events: MatrixEvent[]): TimelineItem[] {
-  return events
-    .map((ev) => ({ event: ev, kind: classify(ev), id: ev.getId() ?? '' }))
-    .filter((it) => it.id)
+  const out: TimelineItem[] = []
+  const consumed = new Set<string>()
+
+  for (let i = 0; i < events.length; i++) {
+    const ev = events[i]
+    const evId = ev.getId() ?? ''
+    if (!evId || consumed.has(evId)) continue
+
+    const tag = galleryTag(ev)
+    if (tag) {
+      // Gather every member of this batch across the whole window (not just the
+      // consecutive run), so interleaved/out-of-order images still land in-grid.
+      const members = events.filter((e) => galleryTag(e)?.id === tag.id)
+
+      // Grid size = declared count, expanded to fit any present index / overflow.
+      let size = tag.count && tag.count >= 1 ? tag.count : 0
+      for (const m of members) {
+        const mi = galleryTag(m)?.index
+        if (typeof mi === 'number' && mi + 1 > size) size = mi + 1
+      }
+      if (members.length > size) size = members.length
+
+      if (size >= 2) {
+        for (const m of members) {
+          const mid = m.getId()
+          if (mid) consumed.add(mid)
+        }
+        const cells: (MatrixEvent | null)[] = new Array(size).fill(null)
+        for (const m of members) {
+          const mi = galleryTag(m)?.index
+          let slot = typeof mi === 'number' ? mi : -1
+          if (slot < 0 || slot >= size || cells[slot] !== null) {
+            slot = cells.findIndex((c) => c === null) // fallback: first free slot
+          }
+          if (slot >= 0) cells[slot] = m
+        }
+        out.push({ event: ev, kind: 'gallery', id: evId, cells, layout: tag.layout ?? 'grid' })
+        continue
+      }
+    }
+
+    out.push({ event: ev, kind: classify(ev), id: evId })
+  }
+
+  return out
 }
 
 // Live timeline for a room: current events, live appends, and scrollback.

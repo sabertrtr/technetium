@@ -12,12 +12,16 @@ export function AuthedImage({
   alt,
   maxHeight = 320,
   onClick,
+  fill = false,
+  transparentLoading = false,
 }: {
   mxc: string
   width?: ThumbSize
   alt?: string
   maxHeight?: number
   onClick?: () => void
+  fill?: boolean
+  transparentLoading?: boolean
 }) {
   const { client } = useClient()
   const [src, setSrc] = useState<string | null>(null)
@@ -64,15 +68,22 @@ export function AuthedImage({
   }
 
   if (!src) {
+    // Render nothing while loading so a layer behind (e.g. a gallery cell's
+    // pending graphic) shows through until the image paints over it.
+    if (transparentLoading) return null
     return (
       <span
-        style={{
-          display: 'inline-block',
-          width: 120,
-          height: 90,
-          borderRadius: 8,
-          background: 'var(--cpd-color-bg-subtle-secondary)',
-        }}
+        style={
+          fill
+            ? { display: 'block', width: '100%', height: '100%', background: 'var(--cpd-color-bg-subtle-secondary)' }
+            : {
+                display: 'inline-block',
+                width: 120,
+                height: 90,
+                borderRadius: 8,
+                background: 'var(--cpd-color-bg-subtle-secondary)',
+              }
+        }
         aria-label="loading image"
       />
     )
@@ -83,13 +94,23 @@ export function AuthedImage({
       src={src}
       alt={alt ?? 'image'}
       onClick={onClick}
-      style={{
-        maxWidth: '100%',
-        maxHeight,
-        borderRadius: 8,
-        display: 'block',
-        cursor: onClick ? 'pointer' : 'default',
-      }}
+      style={
+        fill
+          ? {
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block',
+              cursor: onClick ? 'pointer' : 'default',
+            }
+          : {
+              maxWidth: '100%',
+              maxHeight,
+              borderRadius: 8,
+              display: 'block',
+              cursor: onClick ? 'pointer' : 'default',
+            }
+      }
     />
   )
 }
