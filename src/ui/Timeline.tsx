@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react'
-import type { Room } from 'matrix-js-sdk'
+import { useEffect, useRef, useState } from 'react'
+import { ThreadEvent, type Room, type MatrixEvent } from 'matrix-js-sdk'
 import { useClient } from '../client/ClientContext'
 import { useTimeline, type TimelineItem } from '../client/useTimeline'
 import { renderMessageBody } from '../client/messageBody'
@@ -9,7 +9,7 @@ import { AuthedImage } from './AuthedImage'
 // Read-only timeline. Message bodies render sanitized rich HTML (via DOMPurify)
 // when present, else plaintext. Encrypted events show a placeholder until the
 // crypto phase.
-export function Timeline({ room }: { room: Room }) {
+export function Timeline({ room, onOpenThread }: { room: Room; onOpenThread?: (roomId: string, rootId: string) => void }) {
   const { client } = useClient()
   const { items, loadOlder, loadingOlder, atStart } = useTimeline(client, room)
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -47,7 +47,7 @@ export function Timeline({ room }: { room: Room }) {
         </div>
 
         {items.map((item) => (
-          <Row key={item.id} item={item} />
+          <Row key={item.id} item={item} onOpenThread={onOpenThread} />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -55,7 +55,7 @@ export function Timeline({ room }: { room: Room }) {
   )
 }
 
-function Row({ item }: { item: TimelineItem }) {
+export function Row({ item, onOpenThread }: { item: TimelineItem; onOpenThread?: (roomId: string, rootId: string) => void }) {
   const { event, kind } = item
   const sender = event.getSender() ?? '(unknown)'
   const time = new Date(event.getTs()).toLocaleTimeString([], {
@@ -104,28 +104,78 @@ function Row({ item }: { item: TimelineItem }) {
   }
 
   return (
-    <div style={{ display: 'flex', gap: 8, padding: '2px 0', alignItems: 'baseline' }}>
-      <span
+    <div style={{ padding: '4px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span
+          style={{
+            fontWeight: 600,
+            fontSize: 13,
+            color: 'var(--cpd-color-text-primary)',
+          }}
+        >
+          {sender}
+        </span>
+        <span style={{ fontSize: 11, color: 'var(--cpd-color-text-secondary)', flexShrink: 0 }}>
+          {time}
+        </span>
+      </div>
+      <div
         style={{
-          fontSize: 11,
-          color: 'var(--cpd-color-text-secondary)',
-          flexShrink: 0,
-          width: 48,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2,
+          minWidth: 0,
+          paddingLeft: 16,
+          marginTop: 1,
         }}
       >
-        {time}
-      </span>
-      <span
-        style={{
-          fontWeight: 600,
-          fontSize: 13,
-          color: 'var(--cpd-color-text-primary)',
-          flexShrink: 0,
-        }}
-      >
-        {sender}
-      </span>
-      <span style={{ fontSize: 14, wordBreak: 'break-word' }}>{body}</span>
+        <span style={{ fontSize: 14, wordBreak: 'break-word' }}>{body}</span>
+        {event.isThreadRoot && <ThreadChip event={event} onOpen={onOpenThread} />}
+      </div>
     </div>
+  )
+}
+
+// "N replies" chip under a thread-root message. Reads the live reply count from
+// the event's Thread and re-renders on thread updates. Click-to-open wiring lands
+// in Phase 2 (an onOpen prop threaded from App to open the thread panel).
+function ThreadChip({ event, onOpen }: { event: MatrixEvent; onOpen?: (roomId: string, rootId: string) => void }) {
+  const thread = event.getThread()
+  const [count, setCount] = useState(thread?.length ?? 0)
+
+  useEffect(() => {
+    if (!thread) return
+    const update = () => setCount(thread.length)
+    update()
+    thread.on(ThreadEvent.Update, update)
+    thread.on(ThreadEvent.NewReply, update)
+    return () => {
+      thread.off(ThreadEvent.Update, update)
+      thread.off(ThreadEvent.NewReply, update)
+    }
+  }, [thread])
+
+  if (!thread || count < 1) return null
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        const rootId = event.getId()
+        const roomId = event.getRoomId()
+        if (rootId && roomId && onOpen) onOpen(roomId, rootId)
+      }}
+      style={{
+        alignSelf: 'flex-start',
+        fontSize: 12,
+        padding: '2px 8px',
+        borderRadius: 12,
+        border: '1px solid var(--cpd-color-border-interactive-secondary, #444)',
+        background: 'var(--cpd-color-bg-subtle-secondary)',
+        color: 'var(--cpd-color-text-secondary)',
+        cursor: 'pointer',
+      }}
+    >
+      💬 {count} {count === 1 ? 'reply' : 'replies'}
+    </button>
   )
 }

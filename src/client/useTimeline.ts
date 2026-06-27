@@ -23,7 +23,7 @@ function classify(ev: MatrixEvent): TimelineItemKind {
   return 'other'
 }
 
-function toItems(events: MatrixEvent[]): TimelineItem[] {
+export function toItems(events: MatrixEvent[]): TimelineItem[] {
   return events
     .map((ev) => ({ event: ev, kind: classify(ev), id: ev.getId() ?? '' }))
     .filter((it) => it.id)

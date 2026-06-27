@@ -1,5 +1,6 @@
 import * as sdk from 'matrix-js-sdk'
 import type { MatrixClient, TokenRefreshFunction } from 'matrix-js-sdk'
+import { Thread, FeatureSupport } from 'matrix-js-sdk'
 
 export interface BuildClientParams {
   homeserverUrl: string
@@ -37,6 +38,12 @@ export async function buildClient(params: BuildClientParams): Promise<MatrixClie
 
   // Must be called after createClient and before startClient: loads any
   // previously-persisted sync state from IndexedDB into the store.
+  // Synapse supports stable threads server-side; opt into the efficient
+  // server-side thread list/pagination endpoints.
+  Thread.setServerSideSupport(FeatureSupport.Stable)
+  Thread.setServerSideListSupport(FeatureSupport.Stable)
+  Thread.setServerSideFwdPaginationSupport(FeatureSupport.Stable)
+
   await store.startup()
 
   return client
@@ -50,6 +57,9 @@ export function startAndWaitForSync(client: MatrixClient): Promise<void> {
       if (s === 'PREPARED') resolve()
       else if (s === 'ERROR') reject(new Error('Sync failed'))
     })
-    client.startClient({ initialSyncLimit: 1 })
+    // threadSupport is a startClient option (read from clientOpts), NOT a
+    // createClient option — pass it here so the SDK routes m.thread
+    // replies into Thread timelines instead of the main timeline.
+    client.startClient({ initialSyncLimit: 1, threadSupport: true })
   })
 }

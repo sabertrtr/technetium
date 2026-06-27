@@ -5,6 +5,8 @@ import { NavTree } from './ui/NavTree'
 import { Timeline } from './ui/Timeline'
 import { Composer } from './ui/Composer'
 import { MemberList } from './ui/MemberList'
+import { ThreadPanel } from './ui/ThreadPanel'
+import { ThreadList } from './ui/ThreadList'
 
 // Thin shell: render purely by client lifecycle status. All auth/client logic
 // lives in ClientProvider; App reflects the current phase and, when ready,
@@ -12,6 +14,8 @@ import { MemberList } from './ui/MemberList'
 function App() {
   const { status, error, userId, login, logout } = useClient()
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null)
+  const [openThread, setOpenThread] = useState<{ roomId: string; rootId: string } | null>(null)
+  const [threadListOpen, setThreadListOpen] = useState(false)
 
   if (status === 'starting') return <Centered>Starting…</Centered>
 
@@ -72,12 +76,22 @@ function App() {
                 padding: '10px 16px',
                 borderBottom: '1px solid rgba(128,128,128,0.25)',
                 fontWeight: 600,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
               }}
             >
-              {selectedRoom.name || selectedRoom.roomId}
+              <span>{selectedRoom.name || selectedRoom.roomId}</span>
+              <button
+                type="button"
+                onClick={() => setThreadListOpen((o) => !o)}
+                style={{ fontSize: 12, fontWeight: 400 }}
+              >
+                {threadListOpen ? 'Threads \u2715' : '\u2630 Threads'}
+              </button>
             </header>
             <div style={{ flex: 1, minHeight: 0 }}>
-              <Timeline room={selectedRoom} />
+              <Timeline room={selectedRoom} onOpenThread={(roomId, rootId) => setOpenThread({ roomId, rootId })} />
             </div>
             <Composer room={selectedRoom} />
           </>
@@ -85,6 +99,21 @@ function App() {
           <div style={{ padding: 24, opacity: 0.6 }}>Select a room from the left.</div>
         )}
       </main>
+
+      {threadListOpen && (
+        <ThreadList
+          onSelect={(roomId, rootId) => setOpenThread({ roomId, rootId })}
+          activeRootId={openThread?.rootId}
+        />
+      )}
+
+      {openThread && (
+        <ThreadPanel
+          roomId={openThread.roomId}
+          rootId={openThread.rootId}
+          onClose={() => setOpenThread(null)}
+        />
+      )}
 
       <MemberList room={selectedRoom} />
     </div>

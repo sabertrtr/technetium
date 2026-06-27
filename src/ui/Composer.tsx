@@ -35,7 +35,7 @@ function readImageSize(file: File): Promise<{ w: number; h: number }> {
 // they upload to Synapse (which mints the mxc) and send as m.image; bmb picks the
 // event up and creates the Danbooru post. Sent messages appear in the timeline
 // via the live RoomEvent.Timeline subscription.
-export function Composer({ room }: { room: Room }) {
+export function Composer({ room, threadId }: { room: Room; threadId?: string }) {
   const { client } = useClient()
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
@@ -51,9 +51,11 @@ export function Composer({ room }: { room: Room }) {
     try {
       const { plain, html } = formatMessage(input)
       if (html !== undefined) {
-        await client.sendHtmlMessage(room.roomId, plain, html)
+        if (threadId) await client.sendHtmlMessage(room.roomId, threadId, plain, html)
+        else await client.sendHtmlMessage(room.roomId, plain, html)
       } else {
-        await client.sendTextMessage(room.roomId, plain)
+        if (threadId) await client.sendTextMessage(room.roomId, threadId, plain)
+        else await client.sendTextMessage(room.roomId, plain)
       }
     } catch (err) {
       console.error('Send failed:', err)
@@ -81,12 +83,12 @@ export function Composer({ room }: { room: Room }) {
         name: file.name,
         type: file.type,
       })
-      await client.sendImageMessage(
-        room.roomId,
-        content_uri,
-        { mimetype: file.type, size: file.size, ...(dims ?? {}) },
-        file.name,
-      )
+      const info = { mimetype: file.type, size: file.size, ...(dims ?? {}) }
+      if (threadId) {
+        await client.sendImageMessage(room.roomId, threadId, content_uri, info, file.name)
+      } else {
+        await client.sendImageMessage(room.roomId, content_uri, info, file.name)
+      }
     } catch (err) {
       console.error('Image send failed:', err)
     } finally {
