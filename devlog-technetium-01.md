@@ -394,3 +394,54 @@ Where to look:
 
 Repro: view a room where a known +/@ user is present but NOT powered; their badge
 shows full color instead of dimmed.
+
+---
+
+## Session 2026-06-26 — member-list dim fix, "Nearby", image posting
+
+### Step 2.7-fix — honorific dim decouple (resolves KNOWN BUG above)
+
+Root cause: `MemberRow` drove BOTH the name and the honorific badge off one
+`dimmed` flag. A prior fix coupled the badge color to that flag, so the badge
+receded but dragged the whole name grey with it — a member present in the viewed
+room yet holding rank ELSEWHERE went fully grey instead of just the badge.
+
+Fix — two independent signals in `MemberRow`:
+- `presentHere = !!room && room.roomId in member.powerByRoom` -> NAME (white in
+  the viewed room, grey when not).
+- `authorityHere = identityHonor && honorificFor(plHere) === identityHonor` ->
+  BADGE (tier color when rank is backed HERE, grey when elsewhere).
+- Gated by `honorsRoom = mode === 'room' || mode === 'all-highlight'`; 'all'
+  overrides room context (everyone full strength).
+Verified across all three modes. KNOWN BUG closed.
+
+### Step 2.8 — "Nearby" view + default
+
+"All ·" (all-highlight) relabeled **Nearby**; made the default
+(`useState<Mode>('all-highlight')`). On first load with no room selected it shows
+the full roster greyed — reads as "connected, here's everyone" instead of the
+ambiguous empty pane Room mode gave (empty == indistinguishable from
+not-connected/loading).
+
+### Step 2.9 — image posting (render + send)
+
+Render:
+- `src/client/media.ts` — sole owner of the media gateway. `parseMxc()`,
+  `mediaUrl(mxc, width?)`, `fetchMediaObjectUrl(client, mxc, width?)`. Origin from
+  `VITE_MEDIA_BASE` (default https://mxc.41chan.net); fetches with
+  `client.getAccessToken()` as Bearer, returns an object URL.
+- `src/ui/AuthedImage.tsx` — renders an mxc via the helper; placeholder while
+  loading, [image unavailable] on error, revokes the object URL on unmount.
+- `src/ui/Timeline.tsx` — `m.image` branch in `Row` renders <AuthedImage
+  width={320}> instead of filename-as-text.
+
+Send:
+- `src/ui/Composer.tsx` — image attach button + drag-drop; `readImageSize()` for
+  info.w/h; `client.uploadContent()` -> `client.sendImageMessage()`. Synapse mints
+  a fresh mxc per upload; client-side dedup still deferred (bmb findPostByMd5
+  guards dup booru posts).
+
+Auth: media is fetched through fourier-auth in **bearer mode** at mxc.41chan.net
+(fourier-auth DEVLOG §9), NOT the client's raw Synapse token — keeping fourier-auth
+the single authorization gateway. Verified end-to-end: post from Technetium ->
+renders inline -> lands in the booru via bmb.

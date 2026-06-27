@@ -3,6 +3,8 @@ import type { Room } from 'matrix-js-sdk'
 import { useClient } from '../client/ClientContext'
 import { useTimeline, type TimelineItem } from '../client/useTimeline'
 import { renderMessageBody } from '../client/messageBody'
+import { parseMxc } from '../client/media'
+import { AuthedImage } from './AuthedImage'
 
 // Read-only timeline. Message bodies render sanitized rich HTML (via DOMPurify)
 // when present, else plaintext. Encrypted events show a placeholder until the
@@ -63,6 +65,20 @@ function Row({ item }: { item: TimelineItem }) {
 
   let body: React.ReactNode
   if (kind === 'message') {
+    const content = event.getContent()
+    const mxc = typeof content.url === 'string' ? content.url : ''
+    if (content.msgtype === 'm.image' && parseMxc(mxc)) {
+      // Image message: render the picture inline via the gateway as a thumbnail
+      // (320 snaps to the gateway's allowed sizes). Click-to-open-full is a
+      // later step (needs an authenticated full fetch + lightbox).
+      body = (
+        <AuthedImage
+          mxc={mxc}
+          width={320}
+          alt={typeof content.body === 'string' ? content.body : undefined}
+        />
+      )
+    } else {
     const rendered = renderMessageBody(event)
     body =
       rendered.html !== undefined ? (
@@ -74,6 +90,7 @@ function Row({ item }: { item: TimelineItem }) {
       ) : (
         <span>{rendered.text}</span>
       )
+    }
   } else if (kind === 'encrypted') {
     body = <span style={{ fontStyle: 'italic', opacity: 0.7 }}>🔒 Encrypted (decryption coming later)</span>
   } else if (kind === 'redacted') {
