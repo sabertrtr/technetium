@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { Room } from 'matrix-js-sdk'
 import { useClient } from './client/ClientContext'
 import { NavTree } from './ui/NavTree'
@@ -16,6 +16,8 @@ function App() {
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null)
   const [openThread, setOpenThread] = useState<{ roomId: string; rootId: string } | null>(null)
   const [threadListOpen, setThreadListOpen] = useState(false)
+  const [threadListWidth, setThreadListWidth] = useState(190)
+  const [threadPanelWidth, setThreadPanelWidth] = useState(380)
 
   if (status === 'starting') return <Centered>Starting…</Centered>
 
@@ -101,22 +103,57 @@ function App() {
       </main>
 
       {threadListOpen && (
+          <ResizeHandle onDrag={(dx) => setThreadListWidth((w) => Math.max(140, Math.min(420, w - dx)))} />
+        )}
+        {threadListOpen && (
         <ThreadList
           onSelect={(roomId, rootId) => setOpenThread({ roomId, rootId })}
           activeRootId={openThread?.rootId}
+            width={threadListWidth}
         />
       )}
 
       {openThread && (
+          <ResizeHandle onDrag={(dx) => setThreadPanelWidth((w) => Math.max(280, Math.min(640, w - dx)))} />
+        )}
+        {openThread && (
         <ThreadPanel
           roomId={openThread.roomId}
           rootId={openThread.rootId}
           onClose={() => setOpenThread(null)}
+            width={threadPanelWidth}
         />
       )}
 
       <MemberList room={selectedRoom} />
     </div>
+  )
+}
+
+function ResizeHandle({ onDrag }: { onDrag: (dx: number) => void }) {
+  const startX = useRef(0)
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    startX.current = e.clientX
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    const dx = e.clientX - startX.current
+    startX.current = e.clientX
+    if (dx !== 0) onDrag(dx)
+  }
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+  }
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      style={{ width: 5, flexShrink: 0, cursor: 'col-resize', background: 'transparent', alignSelf: 'stretch' }}
+      title="Drag to resize"
+    />
   )
 }
 

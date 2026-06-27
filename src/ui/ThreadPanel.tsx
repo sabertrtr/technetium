@@ -13,10 +13,12 @@ export function ThreadPanel({
   roomId,
   rootId,
   onClose,
+  width = 380,
 }: {
   roomId: string
   rootId: string
   onClose: () => void
+  width?: number
 }) {
   const { client } = useClient()
   const [, forceRefresh] = useState(0)
@@ -46,7 +48,7 @@ export function ThreadPanel({
   return (
     <aside
       style={{
-        width: 380,
+        width,
         flexShrink: 0,
         borderLeft: '1px solid rgba(128,128,128,0.25)',
         display: 'flex',

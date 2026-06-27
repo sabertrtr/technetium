@@ -11,9 +11,11 @@ import { parseMxc } from '../client/media'
 export function ThreadList({
   onSelect,
   activeRootId,
+  width = 190,
 }: {
   onSelect: (roomId: string, rootId: string) => void
   activeRootId?: string
+  width?: number
 }) {
   const { client } = useClient()
   const entries = useThreadList(client)
@@ -21,7 +23,7 @@ export function ThreadList({
   return (
     <aside
       style={{
-        width: 190,
+        width,
         flexShrink: 0,
         borderLeft: '1px solid rgba(128,128,128,0.25)',
         display: 'flex',
