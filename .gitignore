@@ -32,3 +32,4 @@ dist-ssr
 CLAUDE.md
 devlog-fourier-*.md
 *.bak
+*.bak.*

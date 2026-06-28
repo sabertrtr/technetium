@@ -88,6 +88,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   }) => {
     setStatus('syncing')
     const c = await buildClient(params)
+    if (import.meta.env.DEV) (window as unknown as { mxClient?: unknown }).mxClient = c
     setClient(c)
     await startAndWaitForSync(c)
     setStatus('ready')

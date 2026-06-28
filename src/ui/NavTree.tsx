@@ -100,6 +100,18 @@ function TreeRow({
   const isCollapsed = collapsed.has(node.room.roomId)
   const isSelected = !node.isSpace && node.room.roomId === selectedRoomId
   const indent = 6 + depth * 12
+  const { client } = useClient()
+  const isInvite = node.room.getMyMembership() === 'invite'
+  const [joining, setJoining] = useState(false)
+  const [joinError, setJoinError] = useState(false)
+  const onJoin = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!client || joining) return
+    setJoining(true)
+    setJoinError(false)
+    try { await client.joinRoom(node.room.roomId) }
+    catch { setJoinError(true); setJoining(false) }
+  }
 
   const onClick = () => {
     if (node.isSpace) onToggle(node.room.roomId)
@@ -121,8 +133,10 @@ function TreeRow({
           cursor: 'pointer',
           borderRadius: 6,
           margin: '1px 4px',
-          fontWeight: node.isSpace ? 600 : 400,
-          color: node.isSpace
+          fontWeight: isInvite ? 700 : node.isSpace ? 600 : 400,
+          color: isInvite
+              ? '#3bd16f'
+              : node.isSpace
             ? 'var(--cpd-color-text-secondary)'
             : 'var(--cpd-color-text-primary)',
           background: isSelected ? 'var(--cpd-color-bg-action-primary-rest)' : 'transparent',
@@ -146,6 +160,15 @@ function TreeRow({
         >
           {node.isSpace ? label : `# ${label}`}
         </span>
+        {isInvite && (
+          <span onClick={onJoin}
+            title={joinError ? 'Join failed - click to retry' : 'Accept invite'}
+            style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11, fontWeight: 700,
+              color: joinError ? '#e2554e' : '#3bd16f',
+              cursor: joining ? 'default' : 'pointer', opacity: joining ? 0.6 : 1 }}>
+            {joining ? 'joining...' : joinError ? 'retry' : 'join'}
+          </span>
+        )}
       </div>
       {node.isSpace &&
         !isCollapsed &&
