@@ -62,7 +62,7 @@ export function createMatrixSpaceSource(client: MatrixClient): MemberSource {
     const { spaceRooms, orphanRooms } = partitionRooms(tree)
     const byId = new Map<string, MergedMember>()
 
-    const ensure = (rm: { userId: string; name: string; getMxcAvatarUrl: () => string | null }) => {
+    const ensure = (rm: { userId: string; name: string; getMxcAvatarUrl: () => string | null | undefined }) => {
       let m = byId.get(rm.userId)
       if (!m) {
         m = {

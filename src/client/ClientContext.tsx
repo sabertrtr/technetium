@@ -15,8 +15,10 @@ import { createTokenRefreshFunction } from './tokenRefresher'
 // on the remote server). REDIRECT_URI must match the browser's origin and the
 // redirect_uri registered for this client in MAS.
 const REDIRECT_URI = window.location.origin + '/'
-const CLIENT_ID = '00000000000000000000DEVWEB'
-const DEFAULT_HOMESERVER = 'https://41chan.net'
+const CLIENT_ID =
+  (import.meta.env.VITE_MAS_CLIENT_ID as string | undefined) ?? '00000000000000000000DEVWEB'
+const DEFAULT_HOMESERVER =
+  (import.meta.env.VITE_HOMESERVER as string | undefined) ?? 'https://41chan.net'
 
 // Lifecycle of the client, so the UI can render the right thing per phase.
 export type ClientStatus =

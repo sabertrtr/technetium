@@ -51,14 +51,21 @@ export function useThreadList(client: MatrixClient | null): ThreadListEntry[] {
     }
     rebuild()
     const onChange = () => rebuild()
-    client.on(ThreadEvent.New, onChange)
-    client.on(ThreadEvent.Update, onChange)
-    client.on(ThreadEvent.NewReply, onChange)
+    // The client re-emits room-level ThreadEvents, but its typed EmittedEvents
+    // union doesn't enumerate them — cast the event names. Runtime is correct
+    // (verified: live cross-room thread updates fire); this is types-only.
+    type ClientEv = Parameters<typeof client.on>[0]
+    const TE_NEW = ThreadEvent.New as unknown as ClientEv
+    const TE_UPDATE = ThreadEvent.Update as unknown as ClientEv
+    const TE_NEWREPLY = ThreadEvent.NewReply as unknown as ClientEv
+    client.on(TE_NEW, onChange)
+    client.on(TE_UPDATE, onChange)
+    client.on(TE_NEWREPLY, onChange)
     client.on(ClientEvent.Room, onChange)
     return () => {
-      client.off(ThreadEvent.New, onChange)
-      client.off(ThreadEvent.Update, onChange)
-      client.off(ThreadEvent.NewReply, onChange)
+      client.off(TE_NEW, onChange)
+      client.off(TE_UPDATE, onChange)
+      client.off(TE_NEWREPLY, onChange)
       client.off(ClientEvent.Room, onChange)
     }
   }, [client, rebuild])
