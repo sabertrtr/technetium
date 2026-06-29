@@ -1,5 +1,4 @@
 import type { MatrixClient, Room } from 'matrix-js-sdk'
-import { buildNavTree, type NavTree, type TreeNode } from './spaces'
 
 // IRC-style honorific tiers, mapped to Matrix power levels.
 // ~ owner (100), @ op/mod (50), + voice (25, placeholder), default = none.
@@ -45,21 +44,32 @@ export function maxPower(m: MergedMember): number {
 // Split the nav tree into space-structured rooms (channels — these confer
 // authority) and orphan rooms (DMs / direct-joins — members appear but their PLs
 // do NOT count, since being "admin" of your own DM isn't community standing).
-function partitionRooms(tree: NavTree): { spaceRooms: Room[]; orphanRooms: Room[] } {
+function partitionRooms(client: MatrixClient): { spaceRooms: Room[]; orphanRooms: Room[] } {
+  const joined = client.getRooms().filter((r) => r.getMyMembership() === 'join')
+  // A room confers authority (space room) iff it's a non-space room referenced
+  // as a child of some joined space. Everything else joined and non-space is an
+  // orphan (DM / direct-join): members show but PLs do not count.
+  const childIds = new Set<string>()
+  for (const r of joined)
+    if (r.isSpaceRoom())
+      for (const e of r.currentState.getStateEvents('m.space.child'))
+        if (Object.keys(e.getContent()).length > 0) {
+          const k = e.getStateKey()
+          if (k) childIds.add(k)
+        }
   const spaceRooms: Room[] = []
-  const walk = (node: TreeNode) => {
-    if (!node.isSpace) spaceRooms.push(node.room)
-    node.children.forEach(walk)
+  const orphanRooms: Room[] = []
+  for (const r of joined) {
+    if (r.isSpaceRoom()) continue
+    if (childIds.has(r.roomId)) spaceRooms.push(r)
+    else orphanRooms.push(r)
   }
-  tree.spaces.forEach(walk)
-  const orphanRooms = tree.orphanRooms.map((n) => n.room)
   return { spaceRooms, orphanRooms }
 }
 
 export function createMatrixSpaceSource(client: MatrixClient): MemberSource {
   const build = (): MergedMember[] => {
-    const tree = buildNavTree(client)
-    const { spaceRooms, orphanRooms } = partitionRooms(tree)
+    const { spaceRooms, orphanRooms } = partitionRooms(client)
     const byId = new Map<string, MergedMember>()
 
     const ensure = (rm: { userId: string; name: string; getMxcAvatarUrl: () => string | null | undefined }) => {

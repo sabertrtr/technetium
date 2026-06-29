@@ -1,13 +1,20 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Room } from 'matrix-js-sdk'
 import { useClient } from '../client/ClientContext'
 import { type TreeNode } from '../client/spaces'
 import { useNavTree } from '../client/useNavTree'
 
-// Unified spaces > subspaces > rooms tree: compact, collapsible, theme-aware.
-// Spaces toggle their children open/closed; rooms are selectable. Density and
-// colors use Compound design tokens so it matches the rest of the app. The tree
-// is kept live by useNavTree (rebuilds on room/space changes).
+// Membership/join classification for a node's visual + click behavior.
+type Mode = 'joined' | 'joinable' | 'knock'
+function nodeMode(node: TreeNode): Mode {
+  if (node.membership === 'join') return 'joined'
+  if (node.membership === 'invite') return 'joinable' // accepting = a join
+  const jr = node.joinRule
+  if (jr === 'knock' || jr === 'knock_restricted') return 'knock'
+  // restricted / public / anything else visible-but-unjoined: a direct join.
+  return 'joinable'
+}
+
 export function NavTree({
   selectedRoomId,
   onSelectRoom,
@@ -16,8 +23,7 @@ export function NavTree({
   onSelectRoom?: (room: Room) => void
 }) {
   const { client } = useClient()
-  const tree = useNavTree(client)
-  // Spaces default to expanded; this holds the room-ids that are collapsed.
+  const { tree, loading } = useNavTree(client)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
   const toggle = (roomId: string) =>
@@ -27,7 +33,13 @@ export function NavTree({
       return next
     })
 
-  if (!tree) return null
+  if (!tree) {
+    return (
+      <nav style={{ padding: '8px', fontSize: 13, color: 'var(--cpd-color-text-secondary)' }}>
+        {loading ? 'Loading rooms...' : null}
+      </nav>
+    )
+  }
 
   return (
     <nav
@@ -38,9 +50,16 @@ export function NavTree({
         userSelect: 'none',
       }}
     >
+      <style>{`
+        @keyframes navJoinRipple {
+          0%   { background: var(--cpd-color-bg-action-primary-rest); }
+          100% { background: transparent; }
+        }
+        .nav-join-ripple { animation: navJoinRipple 900ms ease-out 1; }
+      `}</style>
       {tree.spaces.map((node) => (
         <TreeRow
-          key={node.room.roomId}
+          key={node.roomId}
           node={node}
           depth={0}
           collapsed={collapsed}
@@ -66,7 +85,7 @@ export function NavTree({
           </div>
           {tree.orphanRooms.map((node) => (
             <TreeRow
-              key={node.room.roomId}
+              key={node.roomId}
               node={node}
               depth={0}
               collapsed={collapsed}
@@ -96,33 +115,84 @@ function TreeRow({
   selectedRoomId?: string
   onSelectRoom?: (room: Room) => void
 }) {
-  const label = node.room.name || node.room.roomId
-  const isCollapsed = collapsed.has(node.room.roomId)
-  const isSelected = !node.isSpace && node.room.roomId === selectedRoomId
-  const indent = 6 + depth * 12
   const { client } = useClient()
-  const isInvite = node.room.getMyMembership() === 'invite'
-  const [joining, setJoining] = useState(false)
-  const [joinError, setJoinError] = useState(false)
-  const onJoin = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!client || joining) return
-    setJoining(true)
-    setJoinError(false)
-    try { await client.joinRoom(node.room.roomId) }
-    catch { setJoinError(true); setJoining(false) }
+  const label = node.name || node.roomId
+  const isCollapsed = collapsed.has(node.roomId)
+  const isSelected = !node.isSpace && node.roomId === selectedRoomId
+  const indent = 6 + depth * 12
+  const mode = nodeMode(node)
+  const [busy, setBusy] = useState(false)
+  const [knocked, setKnocked] = useState(false)
+  const [actionError, setActionError] = useState(false)
+
+  // Fire a one-shot ripple when this row transitions INTO joined.
+  const prevMode = useRef(mode)
+  const [ripple, setRipple] = useState(false)
+  useEffect(() => {
+    if (prevMode.current !== 'joined' && mode === 'joined') {
+      setRipple(true)
+      const t = setTimeout(() => setRipple(false), 900)
+      prevMode.current = mode
+      return () => clearTimeout(t)
+    }
+    prevMode.current = mode
+  }, [mode])
+
+  const onClick = async () => {
+    if (node.isSpace && mode === 'joined') {
+      onToggle(node.roomId)
+      return
+    }
+    if (mode === 'joined') {
+      if (node.room) onSelectRoom?.(node.room)
+      return
+    }
+    if (!client || busy) return
+    if (mode === 'knock') {
+      setBusy(true)
+      setActionError(false)
+      try {
+        await client.knockRoom(node.roomId)
+        setKnocked(true)
+      } catch {
+        setActionError(true)
+      } finally {
+        setBusy(false)
+      }
+      return
+    }
+    // joinable: join, then open the room once it materializes.
+    setBusy(true)
+    setActionError(false)
+    try {
+      await client.joinRoom(node.roomId)
+      const room = client.getRoom(node.roomId)
+      if (room && !node.isSpace) onSelectRoom?.(room)
+    } catch {
+      setActionError(true)
+    } finally {
+      setBusy(false)
+    }
   }
 
-  const onClick = () => {
-    if (node.isSpace) onToggle(node.room.roomId)
-    else onSelectRoom?.(node.room)
-  }
+  // Color/weight per mode. Knock renders as a green pill with dark text.
+  const isKnockPill = mode === 'knock'
+  const color = actionError
+    ? 'var(--cpd-color-text-critical-primary)'
+    : isKnockPill
+      ? 'var(--cpd-color-bg-canvas-default)'
+      : mode === 'joinable'
+        ? '#3bd16f'
+        : node.isSpace
+          ? 'var(--cpd-color-text-secondary)'
+          : 'var(--cpd-color-text-primary)'
 
   return (
     <>
       <div
         onClick={onClick}
-        title={label}
+        title={knocked ? `${label} (request sent)` : label}
+        className={ripple ? 'nav-join-ripple' : undefined}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -133,23 +203,25 @@ function TreeRow({
           cursor: 'pointer',
           borderRadius: 6,
           margin: '1px 4px',
-          fontWeight: isInvite ? 700 : node.isSpace ? 600 : 400,
-          color: isInvite
+          opacity: busy ? 0.6 : 1,
+          fontWeight: mode === 'joinable' || isKnockPill ? 700 : node.isSpace ? 600 : 400,
+          color,
+          background: isSelected
+            ? 'var(--cpd-color-bg-action-primary-rest)'
+            : isKnockPill
               ? '#3bd16f'
-              : node.isSpace
-            ? 'var(--cpd-color-text-secondary)'
-            : 'var(--cpd-color-text-primary)',
-          background: isSelected ? 'var(--cpd-color-bg-action-primary-rest)' : 'transparent',
+              : 'transparent',
         }}
         onMouseEnter={(e) => {
-          if (!isSelected) e.currentTarget.style.background = 'var(--cpd-color-bg-subtle-secondary)'
+          if (!isSelected && !isKnockPill)
+            e.currentTarget.style.background = 'var(--cpd-color-bg-subtle-secondary)'
         }}
         onMouseLeave={(e) => {
-          if (!isSelected) e.currentTarget.style.background = 'transparent'
+          if (!isSelected && !isKnockPill) e.currentTarget.style.background = 'transparent'
         }}
       >
         <span style={{ width: 12, textAlign: 'center', fontSize: 10, opacity: 0.7 }}>
-          {node.isSpace ? (isCollapsed ? '▸' : '▾') : ''}
+          {node.isSpace ? (isCollapsed ? '\u25B8' : '\u25BE') : ''}
         </span>
         <span
           style={{
@@ -158,23 +230,16 @@ function TreeRow({
             whiteSpace: 'nowrap',
           }}
         >
-          {node.isSpace ? label : `# ${label}`}
+          {label}
         </span>
-        {isInvite && (
-          <span onClick={onJoin}
-            title={joinError ? 'Join failed - click to retry' : 'Accept invite'}
-            style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11, fontWeight: 700,
-              color: joinError ? '#e2554e' : '#3bd16f',
-              cursor: joining ? 'default' : 'pointer', opacity: joining ? 0.6 : 1 }}>
-            {joining ? 'joining...' : joinError ? 'retry' : 'join'}
-          </span>
+        {knocked && (
+          <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.8 }}>requested</span>
         )}
       </div>
-      {node.isSpace &&
-        !isCollapsed &&
+      {node.isSpace && !isCollapsed &&
         node.children.map((child) => (
           <TreeRow
-            key={child.room.roomId}
+            key={child.roomId}
             node={child}
             depth={depth + 1}
             collapsed={collapsed}
