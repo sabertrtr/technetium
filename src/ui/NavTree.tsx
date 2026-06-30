@@ -175,14 +175,14 @@ function TreeRow({
     }
   }
 
-  // Color/weight per mode. Knock renders as a green pill with dark text.
-  const isKnockPill = mode === 'knock'
+  // Color/weight per mode. Joinable = bright green; knock = darker green
+  // (de-emphasized, no pill); joined = normal text.
   const color = actionError
     ? 'var(--cpd-color-text-critical-primary)'
-    : isKnockPill
-      ? 'var(--cpd-color-bg-canvas-default)'
-      : mode === 'joinable'
-        ? '#3bd16f'
+    : mode === 'joinable'
+      ? '#3bd16f'
+      : mode === 'knock'
+        ? '#2b9450'
         : node.isSpace
           ? 'var(--cpd-color-text-secondary)'
           : 'var(--cpd-color-text-primary)'
@@ -204,20 +204,18 @@ function TreeRow({
           borderRadius: 6,
           margin: '1px 4px',
           opacity: busy ? 0.6 : 1,
-          fontWeight: mode === 'joinable' || isKnockPill ? 700 : node.isSpace ? 600 : 400,
+          fontWeight: mode === 'joinable' ? 700 : node.isSpace ? 600 : 400,
           color,
           background: isSelected
             ? 'var(--cpd-color-bg-action-primary-rest)'
-            : isKnockPill
-              ? '#3bd16f'
-              : 'transparent',
+            : 'transparent',
         }}
         onMouseEnter={(e) => {
-          if (!isSelected && !isKnockPill)
+          if (!isSelected)
             e.currentTarget.style.background = 'var(--cpd-color-bg-subtle-secondary)'
         }}
         onMouseLeave={(e) => {
-          if (!isSelected && !isKnockPill) e.currentTarget.style.background = 'transparent'
+          if (!isSelected) e.currentTarget.style.background = 'transparent'
         }}
       >
         <span style={{ width: 12, textAlign: 'center', fontSize: 10, opacity: 0.7 }}>
