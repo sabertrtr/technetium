@@ -120,8 +120,41 @@ export function buildNavTree(client: MatrixClient, rooms: HierarchyRoom[]): NavT
       children: [],
     }))
 
+  // Top-level spaces from sync that the hierarchy did not surface. An INVITE is
+  // actionable before you can see a space's contents, and a just-joined root may
+  // not have its hierarchy fetched yet -- without this, a user invited to the
+  // root space (membership 'invite', never in the joined-only hierarchy) sees an
+  // empty tree. Skip ids already in the tree, or known to be a hierarchy child.
+  const present = new Set<string>(byId.keys())
+  const collect = (ns: TreeNode[]) =>
+    ns.forEach((n) => {
+      present.add(n.roomId)
+      collect(n.children)
+    })
+  collect(spaces)
+  for (const o of orphanRooms) present.add(o.roomId)
+
+  const syncSpaces: TreeNode[] = client
+    .getRooms()
+    .filter(
+      (r) =>
+        r.isSpaceRoom() &&
+        (r.getMyMembership() === 'invite' || r.getMyMembership() === 'join') &&
+        !present.has(r.roomId) &&
+        !childIds.has(r.roomId),
+    )
+    .map((r) => ({
+      roomId: r.roomId,
+      name: r.name || r.roomId,
+      isSpace: true,
+      membership: r.getMyMembership() ?? null,
+      joinRule: null,
+      room: r,
+      children: [],
+    }))
+
   return {
-    spaces: sortChildren(spaces),
+    spaces: sortChildren([...spaces, ...syncSpaces]),
     orphanRooms: orphanRooms.sort((a, b) => (a.name || '').localeCompare(b.name || '')),
   }
 }
