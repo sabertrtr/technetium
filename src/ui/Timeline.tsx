@@ -5,6 +5,7 @@ import { useTimeline, type TimelineItem, type GalleryLayout } from '../client/us
 import { renderMessageBody } from '../client/messageBody'
 import { parseMxc } from '../client/media'
 import { AuthedImage } from './AuthedImage'
+import { useLightbox, type LightboxItem } from './Lightbox'
 
 // Read-only timeline. Message bodies render sanitized rich HTML (via DOMPurify)
 // when present, else plaintext. Encrypted events show a placeholder until the
@@ -57,6 +58,7 @@ export function Timeline({ room, onOpenThread }: { room: Room; onOpenThread?: (r
 
 export function Row({ item, onOpenThread }: { item: TimelineItem; onOpenThread?: (roomId: string, rootId: string) => void }) {
   const { event, kind, cells, layout } = item
+  const { open } = useLightbox()
   const sender = event.getSender() ?? '(unknown)'
   const time = new Date(event.getTs()).toLocaleTimeString([], {
     hour: '2-digit',
@@ -71,13 +73,14 @@ export function Row({ item, onOpenThread }: { item: TimelineItem; onOpenThread?:
     const mxc = typeof content.url === 'string' ? content.url : ''
     if (content.msgtype === 'm.image' && parseMxc(mxc)) {
       // Image message: render the picture inline via the gateway as a thumbnail
-      // (320 snaps to the gateway's allowed sizes). Click-to-open-full is a
-      // later step (needs an authenticated full fetch + lightbox).
+      // (320 snaps to the gateway's allowed sizes). Click opens the full-res
+      // image in the lightbox via an authed full fetch.
       body = (
         <AuthedImage
           mxc={mxc}
           width={320}
           alt={typeof content.body === 'string' ? content.body : undefined}
+          onClick={() => open([{ mxc, ...imageMeta(event) }], 0)}
         />
       )
     } else {
@@ -141,7 +144,19 @@ export function Row({ item, onOpenThread }: { item: TimelineItem; onOpenThread?:
 // One grid cell: a static "pending upload" graphic as the background, with the
 // thumbnail layered over it (transparentLoading, so the graphic shows through
 // until the real image paints). A null / loading / failed slot shows the graphic.
-function GalleryCell({ ev }: { ev: MatrixEvent | null }) {
+// Pull a friendly filename + mimetype off an m.image content for the lightbox
+// (download name + extension hinting). filename wins (MSC2530 caption case),
+// else body; the mediaId is the downstream fallback.
+function imageMeta(ev: MatrixEvent): { name?: string; mimetype?: string } {
+  const c = ev.getContent()
+  const name =
+    typeof c.filename === 'string' ? c.filename : typeof c.body === 'string' ? c.body : undefined
+  const info = c.info as { mimetype?: unknown } | undefined
+  const mimetype = info && typeof info.mimetype === 'string' ? info.mimetype : undefined
+  return { name, mimetype }
+}
+
+function GalleryCell({ ev, onOpen }: { ev: MatrixEvent | null; onOpen?: () => void }) {
   const c = ev?.getContent()
   const mxc = c && typeof c.url === 'string' ? c.url : ''
   const showImg = !!ev && !!parseMxc(mxc)
@@ -190,6 +205,7 @@ function GalleryCell({ ev }: { ev: MatrixEvent | null }) {
             alt={typeof c?.body === 'string' ? c.body : undefined}
             fill
             transparentLoading
+            onClick={onOpen}
           />
         </div>
       )}
@@ -208,6 +224,20 @@ const GALLERY_GAP = 3
 
 function GalleryBody({ cells, layout }: { cells: (MatrixEvent | null)[]; layout: GalleryLayout }) {
   const n = cells.length
+  const { open } = useLightbox()
+  // Present (non-null, valid) images in cell order, plus a map from cell index
+  // to its position in that list, so clicking a cell opens the lightbox at the
+  // right spot and prev/next steps through the batch's real images only.
+  const present: LightboxItem[] = []
+  const presentIndexByCell = new Map<number, number>()
+  cells.forEach((ev, idx) => {
+    if (!ev) return
+    const cc = ev.getContent()
+    const cmxc = typeof cc.url === 'string' ? cc.url : ''
+    if (!parseMxc(cmxc)) return
+    presentIndexByCell.set(idx, present.length)
+    present.push({ mxc: cmxc, ...imageMeta(ev) })
+  })
   const first = cells[0]
   const fc = first?.getContent()
   const caption = first && typeof fc?.filename === 'string' ? renderMessageBody(first) : null
@@ -261,7 +291,14 @@ function GalleryBody({ cells, layout }: { cells: (MatrixEvent | null)[]; layout:
             key={ev?.getId() ?? `empty-${idx}`}
             style={{ position: 'relative', minWidth: 0, ...cellPlacement(idx) }}
           >
-            <GalleryCell ev={ev} />
+            <GalleryCell
+              ev={ev}
+              onOpen={
+                presentIndexByCell.has(idx)
+                  ? () => open(present, presentIndexByCell.get(idx)!)
+                  : undefined
+              }
+            />
           </div>
         ))}
       </div>

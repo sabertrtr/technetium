@@ -7,6 +7,7 @@ import { Composer } from './ui/Composer'
 import { MemberList } from './ui/MemberList'
 import { ThreadPanel } from './ui/ThreadPanel'
 import { ThreadList } from './ui/ThreadList'
+import { LightboxProvider } from './ui/Lightbox'
 
 // Thin shell: render purely by client lifecycle status. All auth/client logic
 // lives in ClientProvider; App reflects the current phase and, when ready,
@@ -19,7 +20,7 @@ function App() {
   const [threadListWidth, setThreadListWidth] = useState(190)
   const [threadPanelWidth, setThreadPanelWidth] = useState(380)
 
-  if (status === 'starting') return <Centered>Starting…</Centered>
+  if (status === 'starting') return <Centered>Starting{'\u2026'}</Centered>
 
   if (status === 'awaiting_login') {
     return (
@@ -42,10 +43,11 @@ function App() {
     )
   }
 
-  if (status === 'syncing') return <Centered>Syncing…</Centered>
+  if (status === 'syncing') return <Centered>Syncing{'\u2026'}</Centered>
 
-  // status === 'ready' — three-pane layout.
+  // status === 'ready' -- three-pane layout.
   return (
+    <LightboxProvider>
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif' }}>
       <aside
         style={{
@@ -127,6 +129,7 @@ function App() {
 
       <MemberList room={selectedRoom} />
     </div>
+    </LightboxProvider>
   )
 }
 
