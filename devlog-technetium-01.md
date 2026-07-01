@@ -446,66 +446,308 @@ Auth: media is fetched through fourier-auth in **bearer mode** at mxc.41chan.net
 the single authorization gateway. Verified end-to-end: post from Technetium ->
 renders inline -> lands in the booru via bmb.
 
+### Step 2.10 -- thread view (enable, pills, panel, threaded composer)
+
+**Enablement gotcha (cost a debugging loop):** `threadSupport: true` is a
+**`startClient`** option, not `createClient`. `supportsThreads()` reads
+`this.clientOpts.threadSupport`, and `clientOpts` is populated by `startClient` --
+so the flag on `createClient` is silently ignored and every `m.thread` reply stays
+flat in the main timeline. Fix: pass it to `startClient({ initialSyncLimit: 1,
+threadSupport: true })`. Also `Thread.setServerSideSupport/List/FwdPagination =
+FeatureSupport.Stable` before `store.startup()`. After fixing, the prior sync was
+poisoned (cached flat) -- had to `indexedDB.deleteDatabase('matrix-client-sync')` +
+hard reload for a fresh threaded sync (token survives in localStorage).
+
+- **Pills:** `ThreadChip` on `event.isThreadRoot` rows shows a live reply-count pill
+  (`thread.length` + `ThreadEvent.Update/NewReply` subscription); click -> open panel.
+- **Panel (`ThreadPanel.tsx`):** resolves its OWN `(roomId, rootId)` via
+  `client.getRoom(roomId).getThread(rootId)`, so it **persists across room switches**
+  (auto-close on room-switch deliberately removed; manual Close kept). Renders
+  root + `thread.timeline` (deduped) through the shared `Row`. Own threaded Composer.
+- **Composer:** optional `threadId` routes `sendTextMessage/sendHtmlMessage/
+  sendImageMessage(roomId, threadId, ...)` into the thread -- text, markdown, image.
+- **Layout:** `aside | main | ThreadList | ThreadPanel | MemberList`; fixed columns
+  take width from `main`, member list unaffected.
+
+### Step 2.11 -- cross-room thread list
+
+**Decision -- client-side aggregation, no server service.** A thread list is
+**per-user / membership-scoped**, so there's no single shareable list to cache; a
+background aggregator would have to re-implement the homeserver's ACLs per user and
+hold long-lived per-user tokens. And `room.getThreads()` is a cheap in-memory read
+off sync data (not a poll), live via `ThreadEvent`. So aggregation belongs in the
+client. (A server-side admin firehose of all threads regardless of membership would
+be a separate, deliberate admin-API thing -- not this.)
+
+- **`useThreadList.ts`:** iterates joined rooms -> `room.getThreads()` ->
+  `{roomId, roomName, rootId, thread, lastTs}` sorted by last activity; live via
+  **client-level** `ThreadEvent.New/Update/NewReply` re-emission + `ClientEvent.Room`;
+  `fetchRoomThreads()` per room to backfill the server-side list on open.
+- **`ThreadList.tsx`:** ~190px strip left of the panel. Tiles: room / author /
+  `(untitled)` title placeholder (future) / start time / text preview or an m.image
+  thumbnail (`AuthedImage` w180/h90) / reply count / last-activity time. Per-tile
+  expandable **stats** toggle (footer-right, `stopPropagation` so it doesn't open the
+  thread): expands to posters / posts / media plus a per-user posts+media breakdown,
+  walking root+replies. Caveat: counts reflect **loaded** events -- long unpaginated
+  threads undercount until scrolled.
+- **JSX-text gotcha:** `\u...` escapes are invalid in raw JSX text (valid only in
+  string literals) -- oxc parse error. Use literal glyph characters in JSX children.
+
+### Step 2.12 -- restacked message rows
+`Row` (shared by main timeline AND thread panel): inline `[time][sender][body]` ->
+**stacked** -- sender (bold) + time (small) on a header line, body indented 16px
+below, reply pill under the body. Same-sender grouping not done yet.
+
+### Step 2.13 -- full-width layout
+`#root` dropped its fixed centered column -> `width:100%` left-aligned, so the
+five-column shell uses the whole viewport.
+
+**Committed:** `7f3105a` (layout), `55e37db` (threads + list + rows). New files:
+`ThreadPanel.tsx`, `useThreadList.ts`, `ThreadList.tsx`.
+
+---
+
+## Session 2026-06-27 -- multi-image batches, gallery grid, resizable panels
+
+### Step 2.14 -- multi-image posting + captions
+`Composer` reworked: attaching (button or drop) now builds a **pending tray**
+instead of firing immediately; `multiple` file select + multi-drop; each thumbnail
+removable. On send, images upload + post sequentially, each its own `m.image` (Matrix
+has no album event, so bmb/Element are unaffected). Typed text rides as a **caption
+on the first image** via **MSC2530** (`filename` = real name, `body` = caption,
+`formatted_body` for markdown) -- built as content + `sendMessage` (the
+`sendImageMessage` helper can't set caption fields). Mid-batch failure stops and keeps
+the unsent images + caption in the tray.
+
+### Step 2.15 -- gallery grouping + grid render
+Every batched image carries a dormant **`net.41chan.gallery`** hint
+`{id, index, count, layout}`. `toItems` coalesces same-`id` images into one **gallery
+item pre-sized to `count`**, each placed by `index`; null slots are placeholders
+(pending/failed/interleaved). A run of <2, or interleaved/partial batches, fall back
+to normal image rows (no reordering). `GalleryBody` renders three sender-chosen
+layouts:
+- **grid** -- fixed ~118px square cells, arranged by count: 2/3 in a row, 4 as 2x2,
+  **5 as a double-height cell on the left + a 2x2 on the right** (3-col x 2-row
+  template, cell-0 spans both rows; `width: max-content` so fixed columns aren't
+  clipped).
+- **stack** -- constant total height (300px), N full-width rows divide it.
+- **strip** -- constant total width+height (360x280), N columns divide it.
+`GalleryCell` fills its track (geometry lives in `GalleryBody`); static **pending-
+glyph** background (inline SVG, swappable for a served PNG) with the thumbnail layered
+over it; `AuthedImage` gained **`fill`** (object-fit cover) + **`transparentLoading`**
+(renders nothing while loading so the glyph shows through until paint). Caption from
+index-0 below the grid. Sender picks layout in the composer (picker shows for >=2
+images); `toItems` reads it off the flag and stamps it on the item -- **viewer
+override deferred** (renderer already takes layout as plain input, so a local toggle
+layers on cleanly).
+
+### Step 2.16 -- drag-resizable thread list + panel
+`ResizeHandle` (5px `col-resize` bar, pointer-capture drag) on each panel's **left
+edge**; widths lifted into `App` state, clamped (list 140-420, panel 280-640). Left-
+edge drag = inverse of pointer dx (drag left -> wider); `main` (flex:1) absorbs it so
+the member list stays fixed. **In-memory** (resets on reload) -- localStorage
+persistence deferred.
+
+### Notes
+- **Anchored-edit lesson:** multi-line edits keyed off `cat -n` output kept missing on
+  whitespace; bare unique single-line substrings (+ a `count==1` guard) are the
+  reliable anchor for files not written in-session.
+
+**Committed:** `267488e` (panel resize), `37ed078` (multi-image + caption + gallery
+grid). No new files -- all edits to existing.
+
+### Future ideas (raised 2026-06-27) -- thread-list evolution
+Sized for whoever picks these up; none built. (#1/#3 lean on Matrix **account data**.)
+
+1. **Star/pin threads to the top.** Smallest. Splits on where the star lives:
+   *local* (a `Set` in `localStorage`, sort starred-first in `useThreadList`) is
+   trivial; *portable* (stars follow the user to any client) stores a
+   `net.41chan.starred_threads` **account-data** event -- same effort tier, syncs
+   per-user across devices for free. **Lean portable.** Key must be the
+   `(roomId, rootId)` pair, not just `rootId`.
+2. **Repopulate active threads across logins** -- looks like a feature, is really a
+   **protocol limitation**, and is the **highest-value** of the three. Root cause: the
+   list is built from `room.getThreads()`, which only sees threads whose events are in
+   the synced window -- so after a fresh login / cache clear, rooms not yet scrolled
+   show **nothing**. Fix isn't "remembering"; it's **eager hydration on login**: walk
+   joined rooms calling `room.fetchRoomThreads()` (the server-side `/threads` endpoint
+   we already enabled) so the list reflects what the server knows. Cost = N requests
+   across joined rooms on login -> wants **throttle/backoff + a loading state**.
+3. **Containerize threads into user-arranged spaces** (sort / filter / group / custom
+   buckets) -- the **big** one. Sort/filter on data already on hand (room, author,
+   activity, starred, media-count) is incremental + buildable. User-defined buckets
+   with custom drag/arrange means persisting a layout model (account data again) + an
+   org UI = a project, not a step. **Scope down:** ship sort + filter on existing
+   fields first; custom buckets are the moonshot.
+
+---
+
+## 2026-06-28 (session 2) -- invite UI, nav-tree investigation, hierarchy finding
+
+Client-side work this session:
+
+### Invite accept UI (built, committed `9c6cb49`)
+`NavTree.tsx`: rooms/spaces with `getMyMembership() === 'invite'` render **bright
+green + bold** (`#3bd16f`) with a click **"join"** affordance (`marginLeft:auto`).
+Click -> `client.joinRoom(roomId)`; on success the tree auto-rebuilds via the
+EXISTING `RoomEvent.MyMembership` listener in `useNavTree` (already subscribed -- no
+hook change needed) and the row becomes a normal joined room. Failure -> red "retry".
+`stopPropagation` so join doesn't also fire row-select.
+- Covers BOTH cases: channel invites render in-tree; space invites render at top
+  level (an invited space passes the `!childIds.has()` top-level filter in
+  `buildNavTree`, so it already flows through as a top node).
+- **Join-only for now.** Decline deferred (decline == `client.leave()` == reject;
+  add later as a companion).
+
+### Dev-only client exposure (committed `9c6cb49`)
+`ClientContext.tsx` after `buildClient`: `if (import.meta.env.DEV) window.mxClient = c`.
+Vite strips DEV-false branches from prod, so it never ships. Gives console access to
+the live authenticated client for interactive debugging (room state, hierarchy,
+membership).
+
+### KEY FINDING -- getRoomHierarchy returns the full skeleton to space members
+`client.getRoomHierarchy(spaceId, 50, 3)` returns the full space skeleton -- every
+subspace AND channel, with names + join rules -- to a member of the space, even for
+rooms that member hasn't joined. So the server exposes space structure to space
+members regardless of per-room membership. This VALIDATES building the nav tree from
+hierarchy structure, not just synced rooms.
+
+### Nav-tree requirement + deferred design (NOT built -- next session opener)
+Current `buildNavTree` sources children from `m.space.child` but only renders a child
+if it's in `client.getRooms()` (sync) -- so a clean space-member-no-channels session
+shows the space EMPTY (channels correctly hidden, BUT subspaces also hidden).
+Requirement: **subspaces always visible; channels hidden unless joined (or invited).**
+The fix is a HYBRID tree (deferred, designed):
+- **Structure** from `getRoomHierarchy(spaceId)` (includes unjoined subspaces +
+  channels with names). Async + paginated -> `useNavTree` must gain loading/error +
+  caching (fetch on space-load, refresh on `m.space.child` change; membership overlay
+  stays live from sync). Real refactor of the nav-tree DATA layer, not a filter.
+- **Membership** overlaid from sync (`getMyMembership()`) for styling + the show/hide
+  rule.
+- **Render rule:** `room_type === 'm.space'` -> always show; room -> show only if
+  joined/invited, else hide.
+
+### Dev-environment lesson (cost real time -- recurred 4x this session)
+Element and Technetium share dev origin `127.0.0.1:5173`, so they share browser
+storage (same-origin policy: storage is per origin, not per app). A prior Element
+session left `im.vector.*`/`io.element.*` account data + `m.direct` in that origin's
+IndexedDB; Technetium then rendered THOSE rooms + DMs while the live token was a
+different user. Ground truth: the homeserver showed the test user in ZERO rooms --
+proving the tree was 100% stale local state, not a server leak. **Firefox private
+windows do NOT fix this** -- all private windows share ONE private session/storage
+pool (private browsing = "forget on close", NOT "isolate concurrent identities"). The
+right tool is **Multi-Account Containers** (per-identity isolated storage) or a
+separate browser. Test alts there, never the admin browser at the same origin.
+
+---
+
+## Session 2026-06-29 -- nav-tree hybrid (built)
+
+Resolves the "next session opener" from 2026-06-28: the deferred hybrid nav-tree got
+built. Structure now from the server hierarchy, membership from sync.
+
+- **`buildNavTree(client, rooms: HierarchyRoom[])`** (`client/spaces.ts`) -- builds
+  from `getRoomHierarchy` entries (which INCLUDE unjoined-but-visible rooms).
+  `TreeNode` no longer assumes a live `Room`: carries `roomId`/`name`/`membership`/
+  `joinRule` explicitly with `room: Room | null` (null when unjoined). Structure from
+  `children_state`; membership via `client.getRoom()`.
+- **`useNavTree` is async** -- returns `{ tree, loading }`. Roots discovered from sync
+  (joined space rooms not parented by another joined space -- no hardcoded root id,
+  supports a future 2nd top space). Per-root `getRoomHierarchy` paginated to
+  completion via `next_batch`. CHEAP cache-overlay rebuild (re-reads membership/names
+  off the cached skeleton -- instant, drives join feedback) vs EXPENSIVE refetch (re-
+  pulls hierarchies); a membership change does both. `RoomStateEvent.Events` triggers
+  refetch ONLY for `m.space.child`. Sequence counter discards superseded fetches.
+  Keep-previous: never blanks mid-fetch.
+- **Three-state render** (`ui/NavTree.tsx`), by `membership` + `joinRule`:
+  - joined -> normal text (open room / toggle space).
+  - joinable (invite, or unjoined restricted/public) -> solid green; click `joinRoom`
+    then open.
+  - knock (unjoined knock) -> green pill, dark text; click `knockRoom`, row shows
+    'requested'. *(Superseded 2026-06-30 -- see nav-tree fixes.)*
+  - Ripple-on-join: one-shot green CSS sweep when a row transitions into joined.
+- Orphan rooms (DMs/direct-joins, absent from every hierarchy) -> 'Direct & other'
+  group at the bottom.
+
+**members.ts decoupled from the nav tree:** `client/members.ts` no longer calls
+`buildNavTree`; it enumerates JOINED rooms directly (`getRooms()` filtered to `join`)
+with its own space-vs-orphan partition. **Load-bearing decouple, do NOT re-couple:**
+the tree now intentionally holds unjoined nodes with `room: null` (no membership/PL to
+feed the honorific model); member-list correctness depends on iterating only real
+joined rooms.
+
+**Tooling -- typecheck command:** reliable typecheck is
+**`npx --no-install tsc --noEmit -p tsconfig.app.json`** (or `tsc -b`). Bare
+`tsc --noEmit` silently checks NOTHING on this project-references layout: root
+`tsconfig.json` is a solution file (`files: []` + `references`), zero input files,
+always "passes." `-p tsconfig.app.json` is the project that actually `include`s
+`src/`. (Bare `npx tsc` also pulls a bogus package -- always `--no-install`.)
+
+Deferred: `buildNavTree` walks every joined non-hierarchy room into 'Direct & other'
+unconditionally -- fine now, needs grouping/lazy render at DM scale.
+
+---
+
+## Session 2026-06-30 -- nav-tree fixes (post-open)
+
+Real usage surfaced two nav-tree regressions.
+
+### Invited/joined top-level spaces overlaid from sync (`b610e80`)
+The hybrid tree fetched `getRoomHierarchy` only for JOINED roots, so a user invited to
+the ROOT space (membership `invite`) got an empty tree -- a regression from the old
+all-rooms iteration. Fix: `buildNavTree` overlays top-level spaces with membership
+`invite` OR `join` from sync that the hierarchy didn't surface (independent of the
+fetch). Also covers the post-accept window before the refetch lands (no flicker-to-
+empty).
+
+### Knock rooms de-emphasized (`b43ae4e`)
+Supersedes the 06-29 render: knock was a green pill with dark text -- too loud. Now
+plain **darker-green text** (`#2b9450`), normal weight, transparent bg, normal hover.
+Joinable stays bright green (`#3bd16f`); shade alone separates join (bright) from
+knock (dark), no fill.
+
 ---
 
 ## Session 2026-06-30 -- media viewer (lightbox): enlarge, save, in-gallery nav
 
-NOTE: this public devlog was last updated at Step 2.9 (2026-06-26). Intervening
-sessions (thread view, multi-image galleries + resizable panels, per-room media
-authorization, nav-tree hybrid + access model, 41chan opened) live in the
-canonical fourier-basis devlog and are NOT backfilled here.
+Full-screen image viewer, built on the inline image rendering (Step 2.9) and the
+gallery grid (Step 2.15). Commit `8e38f6e`; deployed to `tc.41chan.net`.
 
 ### Media viewer -- click-to-enlarge + save
-
-A full-screen image viewer built on top of the inline image rendering from Step 2.9.
-
-- `src/ui/Lightbox.tsx` (new) -- `LightboxProvider` + `useLightbox()`. Mounted
-  ONCE at App root (`src/App.tsx`) so any descendant opens it via the hook with
-  no prop-drilling. This matters because `Row` is shared by the timeline AND the
-  thread panel (`ThreadPanel` imports `Row`), so one provider covers both
-  surfaces automatically.
-- Shows the image FULL-RES: reuses `fetchMediaObjectUrl(client, mxc)` from
-  media.ts with NO width param (the inline path passes width=320/360 for a
-  thumbnail; the viewer omits it for the full download). Same authed gateway /
-  bearer path -- no new fetch machinery.
-- Object-URL lifecycle owned by the provider: fetch on open/navigate, revoke the
-  prior blob on change and on close. The fetched blob is RETAINED so Save reuses
-  it -- no second network round-trip.
-- Save = synthetic `<a download=filename>` pointed at the already-fetched object
-  URL. Filename precedence: `content.filename` (MSC2530 caption case) -> `body`
-  -> mxc mediaId, with an extension derived from `info.mimetype` when the name
-  lacks one (`imageMeta()` helper in Timeline.tsx).
-- Dismiss: backdrop click, Close button, or Escape. Clicks on the image / toolbar
-  stopPropagation so they do not close the viewer.
-- Wiring: `AuthedImage` already exposed `onClick` (+ pointer cursor); wired at the
-  single-image `m.image` branch in `Row` and in `GalleryCell`.
+- `src/ui/Lightbox.tsx` (new) -- `LightboxProvider` + `useLightbox()`, mounted ONCE at
+  App root (`src/App.tsx`) so any descendant opens it with no prop-drilling. Matters
+  because `Row` is shared by the timeline AND the thread panel (`ThreadPanel` imports
+  `Row`) -- one provider covers both.
+- Full-res: reuses `fetchMediaObjectUrl(client, mxc)` (media.ts) with NO width param
+  (the inline path passes width=320/360 for thumbnails; the viewer omits it). Same
+  authed bearer/gateway path -- no new fetch machinery.
+- Object-URL lifecycle owned by the provider: fetch on open/navigate, revoke the prior
+  blob on change + close. The blob is RETAINED so Save reuses it -- no second round-
+  trip.
+- Save = synthetic `<a download=filename>` at the already-fetched object URL.
+  Filename: `content.filename` (MSC2530 caption case) -> `body` -> mxc mediaId, with an
+  extension from `info.mimetype` when the name lacks one (`imageMeta()` in
+  Timeline.tsx).
+- Dismiss: backdrop / Close button / Escape; image + toolbar clicks stopPropagation.
+  `AuthedImage` already exposed `onClick` (+ pointer cursor) -- wired at the single-
+  image `m.image` branch in `Row` and in `GalleryCell`.
 
 ### In-gallery prev/next
+Scoped to WITHIN the clicked gallery (cross-timeline nav deferred).
+- Viewer holds an ordered SET + index: `open(items: LightboxItem[], startIndex)`. A
+  single image is a one-element set, no arrows (`hasNav = items.length > 1`).
+- `GalleryBody` (owns `cells`) builds the set: `present` = non-null valid-mxc cells in
+  order + a `presentIndexByCell` map; each cell's `onOpen` opens the whole batch at
+  that cell's position -- clicking the 3rd opens ON the 3rd, and prev/next walk only
+  REAL images (pending/failed slots skipped, not shown as blanks).
+- `GalleryCell` decoupled from the lightbox (takes `onOpen?`, no `useLightbox()`) --
+  the component that owns the data owns the open call.
+- Controls: prev/next buttons + an `n / N` counter (only when >1), ArrowLeft/ArrowRight
+  keys, clamp at the ends (buttons disable + dim, no wrap).
 
-Deferred at first (single-image viewer shipped, cross-gallery nav punted), then
-added the same session before commit -- scoped to WITHIN the clicked gallery only
-(cross-timeline nav still deferred: it would mean feeding timeline state into the
-viewer).
+**Files:** new `src/ui/Lightbox.tsx`; edits `src/App.tsx` (provider mount),
+`src/ui/Timeline.tsx` (Row onClick, `GalleryCell`/`GalleryBody` nav, `imageMeta()`).
+`tsc -b` clean.
 
-- Viewer now holds an ordered SET + current index instead of one item:
-  `open(items: LightboxItem[], startIndex)`. A single image is just a
-  one-element set -- no arrows rendered (`hasNav = items.length > 1`).
-- `GalleryBody` (which owns `cells`) builds the nav set: `present` = the non-null,
-  valid-mxc cells in order, plus a `presentIndexByCell` map. Each cell gets an
-  `onOpen` that opens the whole batch at that cell's position -- so clicking the
-  3rd image opens ON the 3rd, and prev/next walk only REAL images (pending/failed
-  slots are skipped, not shown as blanks in the viewer).
-- `GalleryCell` decoupled from the lightbox: it no longer calls `useLightbox()`,
-  it just takes an `onOpen?` callback (same spirit as the member-source decouple
-  -- the component that owns the data owns the open call).
-- Controls: prev/next buttons + an `n / N` counter (shown only when >1),
-  ArrowLeft/ArrowRight keys, clamp at the ends (buttons disable + dim, no wrap).
-
-**Files:** new `src/ui/Lightbox.tsx`; edits to `src/App.tsx` (provider mount) and
-`src/ui/Timeline.tsx` (Row single-image onClick, `GalleryCell` / `GalleryBody`
-nav wiring, `imageMeta()` helper). Typecheck `tsc -b` clean. Feature commit
-`8e38f6e`.
-
-**Deferred:** cross-timeline nav (viewer walks a single gallery only); save
-directly from an inline thumbnail via right-click (save currently lives inside
-the viewer).
+**Deferred:** cross-timeline nav; save directly from an inline thumbnail (save
+currently lives inside the viewer).
