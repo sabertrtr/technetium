@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useClient } from '../client/ClientContext'
-import { fetchMediaObjectUrl, parseMxc } from '../client/media'
+import { fetchMediaSrc, parseMxc } from '../client/media'
 
 // Full-screen image viewer, mounted once at App root as a provider so any
 // descendant (timeline, thread panel) opens it via useLightbox() with no
@@ -93,7 +93,7 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState(false)
   // The fetched full-res object URL, retained so Save reuses the exact blob the
   // viewer already downloaded. Revoked on close / item change.
-  const urlRef = useRef<string | null>(null)
+  const revokeRef = useRef<(() => void) | null>(null)
 
   const current = items && index >= 0 && index < items.length ? items[index] : null
   const hasNav = !!items && items.length > 1
@@ -124,14 +124,14 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
     setSrc(null)
     setError(false)
 
-    fetchMediaObjectUrl(client, cur.mxc)
-      .then((objUrl) => {
+    fetchMediaSrc(client, cur.mxc)
+      .then(({ src: resolved, revoke }) => {
         if (cancelled) {
-          URL.revokeObjectURL(objUrl)
+          revoke()
           return
         }
-        urlRef.current = objUrl
-        setSrc(objUrl)
+        revokeRef.current = revoke
+        setSrc(resolved)
       })
       .catch(() => {
         if (!cancelled) setError(true)
@@ -139,9 +139,9 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       cancelled = true
-      if (urlRef.current) {
-        URL.revokeObjectURL(urlRef.current)
-        urlRef.current = null
+      if (revokeRef.current) {
+        revokeRef.current()
+        revokeRef.current = null
       }
     }
   }, [client, items, index])

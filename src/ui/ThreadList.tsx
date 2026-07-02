@@ -1,24 +1,45 @@
 import { useState } from 'react'
-import type { Thread } from 'matrix-js-sdk'
 import { useClient } from '../client/ClientContext'
-import { useThreadList, type ThreadListEntry } from '../client/useThreadList'
+import {
+  useThreadList,
+  threadListDefaults,
+  type ThreadListItem,
+  type ThreadScope,
+  type ThreadSort,
+} from '../client/useThreadList'
 import { AuthedImage } from './AuthedImage'
 import { parseMxc } from '../client/media'
 
-// Cross-room thread inbox strip. Sits left of the thread panel at ~half its width.
-// Each tile shows room, author, start time, first-post preview/thumbnail, reply
-// count, most-recent time — and an expandable stats breakdown.
+// Thread inbox strip. Scoped to the current room by default (user-changeable
+// default eventually via account-data prefs); toggleable to all joined rooms.
+// Tiles carry an inline stat cluster (posts / media / posters) whose hover (or
+// tap, on touch) reveals the per-user breakdown.
 export function ThreadList({
   onSelect,
   activeRootId,
+  roomId,
   width = 190,
 }: {
   onSelect: (roomId: string, rootId: string) => void
   activeRootId?: string
+  roomId?: string
   width?: number
 }) {
   const { client } = useClient()
-  const entries = useThreadList(client)
+  const defaults = threadListDefaults()
+  const [scope, setScope] = useState<ThreadScope>(roomId ? defaults.scope : 'all')
+  const [sort, setSort] = useState<ThreadSort>(defaults.sort)
+  const entries = useThreadList(client, { roomId, scope, sort })
+
+  const chip = (active: boolean): React.CSSProperties => ({
+    fontSize: 11,
+    padding: '2px 8px',
+    borderRadius: 10,
+    border: '1px solid rgba(128,128,128,0.35)',
+    background: active ? 'var(--cpd-color-bg-subtle-secondary)' : 'transparent',
+    color: 'var(--cpd-color-text-primary)',
+    cursor: 'pointer',
+  })
 
   return (
     <aside
@@ -33,14 +54,38 @@ export function ThreadList({
     >
       <div
         style={{
-          padding: '10px 12px',
+          padding: '10px 12px 6px',
           borderBottom: '1px solid rgba(128,128,128,0.25)',
-          fontWeight: 600,
-          fontSize: 13,
           flexShrink: 0,
         }}
       >
-        Threads
+        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Threads</div>
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', paddingBottom: 6 }}>
+          {roomId && (
+            <button type="button" style={chip(scope === 'room')} onClick={() => setScope('room')}>
+              This room
+            </button>
+          )}
+          <button type="button" style={chip(scope === 'all')} onClick={() => setScope('all')}>
+            All rooms
+          </button>
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as ThreadSort)}
+            style={{
+              fontSize: 11,
+              background: 'transparent',
+              color: 'var(--cpd-color-text-primary)',
+              border: '1px solid rgba(128,128,128,0.35)',
+              borderRadius: 10,
+              padding: '2px 4px',
+            }}
+          >
+            <option value="latest-activity">Latest</option>
+            <option value="created">Created</option>
+            <option value="reply-count">Replies</option>
+          </select>
+        </div>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {entries.length === 0 ? (
@@ -49,8 +94,9 @@ export function ThreadList({
           entries.map((e) => (
             <ThreadTile
               key={e.roomId + e.rootId}
-              entry={e}
+              item={e}
               active={e.rootId === activeRootId}
+              showRoom={scope === 'all'}
               onSelect={onSelect}
             />
           ))
@@ -61,18 +107,18 @@ export function ThreadList({
 }
 
 function ThreadTile({
-  entry,
+  item,
   active,
+  showRoom,
   onSelect,
 }: {
-  entry: ThreadListEntry
+  item: ThreadListItem
   active: boolean
+  showRoom: boolean
   onSelect: (roomId: string, rootId: string) => void
 }) {
-  const { thread, roomName, roomId, rootId, lastTs } = entry
-  const [expanded, setExpanded] = useState(false)
+  const { thread, roomName, roomId, rootId, lastTs, createdTs, author } = item
   const root = thread.rootEvent
-  const author = root?.getSender() ?? '(unknown)'
   const content = root?.getContent()
   const bodyRaw = typeof content?.body === 'string' ? content.body : ''
   const preview = bodyRaw.replace(/\s+/g, ' ').trim() || '(no preview)'
@@ -88,8 +134,6 @@ function ThreadTile({
           minute: '2-digit',
         })
       : ''
-  const startTime = fmt(root?.getTs() ?? 0)
-  const lastTime = fmt(lastTs)
 
   const ell = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const
 
@@ -104,7 +148,9 @@ function ThreadTile({
         onClick={() => onSelect(roomId, rootId)}
         style={{ padding: '8px 10px', cursor: 'pointer', color: 'var(--cpd-color-text-primary)' }}
       >
-        <div style={{ fontSize: 11, color: 'var(--cpd-color-text-secondary)', ...ell }}>{roomName}</div>
+        {showRoom && (
+          <div style={{ fontSize: 11, color: 'var(--cpd-color-text-secondary)', ...ell }}>{roomName}</div>
+        )}
         <div style={{ fontSize: 12, fontWeight: 600, ...ell }}>{author}</div>
         {/* Placeholder for a future thread title (not yet a feature). */}
         <div
@@ -118,7 +164,7 @@ function ThreadTile({
         >
           (untitled)
         </div>
-        <div style={{ fontSize: 10, color: 'var(--cpd-color-text-secondary)', ...ell }}>{startTime}</div>
+        <div style={{ fontSize: 10, color: 'var(--cpd-color-text-secondary)', ...ell }}>{fmt(createdTs)}</div>
         {isImage ? (
           <AuthedImage mxc={mxc} width={180} maxHeight={90} alt={preview} />
         ) : (
@@ -133,86 +179,59 @@ function ThreadTile({
             marginTop: 2,
           }}
         >
-          <span style={{ fontSize: 10, color: 'var(--cpd-color-text-secondary)', ...ell }}>
-            💬 {thread.length} · {lastTime}
+          <StatCluster item={item} />
+          <span style={{ fontSize: 10, color: 'var(--cpd-color-text-secondary)', flexShrink: 0 }}>
+            {fmt(lastTs)}
           </span>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              setExpanded((v) => !v)
-            }}
-            style={{
-              flexShrink: 0,
-              border: 'none',
-              background: 'transparent',
-              color: 'var(--cpd-color-text-secondary)',
-              fontSize: 10,
-              padding: 0,
-              cursor: 'pointer',
-            }}
-          >
-            {expanded ? '▾' : '▸'} stats
-          </button>
         </div>
       </div>
-      {expanded && <ThreadStats thread={thread} />}
     </div>
   )
 }
 
-// Aggregate breakdown of a thread: walk root + replies, count posts and
-// media-bearing posts overall and per sender.
-function ThreadStats({ thread }: { thread: Thread }) {
-  const tl = thread.timeline
-  const rootEv = thread.rootEvent
-  const events =
-    rootEv && !tl.some((e) => e.getId() === rootEv.getId()) ? [rootEv, ...tl] : tl
-
-  const MEDIA = new Set(['m.image', 'm.file', 'm.video', 'm.audio'])
-  const perUser = new Map<string, { posts: number; media: number }>()
-  let total = 0
-  let mediaTotal = 0
-  for (const ev of events) {
-    if (ev.getType() !== 'm.room.message') continue
-    const sender = ev.getSender()
-    if (!sender) continue
-    const msgtype = ev.getContent()?.msgtype
-    const isMedia = typeof msgtype === 'string' && MEDIA.has(msgtype)
-    total++
-    if (isMedia) mediaTotal++
-    const u = perUser.get(sender) ?? { posts: 0, media: 0 }
-    u.posts++
-    if (isMedia) u.media++
-    perUser.set(sender, u)
-  }
-  const users = [...perUser.entries()]
-    .map(([id, v]) => ({ id, posts: v.posts, media: v.media }))
-    .sort((a, b) => b.posts - a.posts)
-
+// Inline stat cluster: posts / media posts / unique posters. Hovering (or, on
+// touch, tapping) shows the per-user breakdown: "@user: 15(p) 10(m)".
+function StatCluster({ item }: { item: ThreadListItem }) {
+  const [show, setShow] = useState(false)
   return (
-    <div
-      style={{
-        padding: '6px 10px 10px',
-        fontSize: 11,
-        color: 'var(--cpd-color-text-secondary)',
-        background: 'rgba(128,128,128,0.06)',
+    <span
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+      onClick={(e) => {
+        // Tap-toggle for touch; stop the tile's open-thread click.
+        e.stopPropagation()
+        setShow((v) => !v)
       }}
+      style={{ position: 'relative', display: 'inline-flex', gap: 8, minWidth: 0 }}
     >
-      <div style={{ fontWeight: 600, marginBottom: 4 }}>
-        {perUser.size} {perUser.size === 1 ? 'poster' : 'posters'} · {total}{' '}
-        {total === 1 ? 'post' : 'posts'} · {mediaTotal} media
-      </div>
-      {users.map((u) => (
-        <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {u.id}
-          </span>
-          <span style={{ flexShrink: 0 }}>
-            {u.posts} · 📎{u.media}
-          </span>
-        </div>
-      ))}
-    </div>
+      <span style={{ fontSize: 10, color: 'var(--cpd-color-text-secondary)', whiteSpace: 'nowrap' }}>
+        {'\u{1F4AC}'} {item.postCount} {'\u00B7'} {'\u{1F4CE}'} {item.mediaCount} {'\u00B7'} {'\u{1F464}'} {item.posterCount}
+      </span>
+      {show && item.perUser.length > 0 && (
+        <span
+          style={{
+            position: 'absolute',
+            bottom: '100%',
+            left: 0,
+            marginBottom: 4,
+            zIndex: 20,
+            background: 'var(--cpd-color-bg-canvas-default)',
+            border: '1px solid rgba(128,128,128,0.35)',
+            borderRadius: 6,
+            padding: '6px 8px',
+            fontSize: 11,
+            color: 'var(--cpd-color-text-secondary)',
+            whiteSpace: 'nowrap',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.35)',
+          }}
+        >
+          {item.perUser.map((u) => (
+            <span key={u.userId} style={{ display: 'block' }}>
+              {u.userId}: {'\u{1F4AC}'}{u.posts} {'\u{1F4CE}'}{u.media}
+            </span>
+          ))}
+        </span>
+      )}
+    </span>
   )
 }

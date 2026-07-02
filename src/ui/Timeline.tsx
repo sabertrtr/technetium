@@ -10,19 +10,107 @@ import { useLightbox, type LightboxItem } from './Lightbox'
 // Read-only timeline. Message bodies render sanitized rich HTML (via DOMPurify)
 // when present, else plaintext. Encrypted events show a placeholder until the
 // crypto phase.
-export function Timeline({ room, onOpenThread }: { room: Room; onOpenThread?: (roomId: string, rootId: string) => void }) {
+export function Timeline({ room, onOpenThread, threadListOpen, onToggleThreadList }: { room: Room; onOpenThread?: (roomId: string, rootId: string) => void; threadListOpen?: boolean; onToggleThreadList?: () => void }) {
   const { client } = useClient()
   const { items, loadOlder, loadingOlder, atStart } = useTimeline(client, room)
-  const bottomRef = useRef<HTMLDivElement | null>(null)
-
-  // Keep the newest message in view when the item count changes.
   useEffect(() => {
+    followRef.current = true
+  }, [room])
+  const bottomRef = useRef<HTMLDivElement | null>(null)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  // Non-null while a load-older is in flight: the scrollHeight captured
+  // just before the prepend, used to restore the viewport afterward.
+  const prependHeightRef = useRef<number | null>(null)
+  // Follow mode: while true, every content/layout change re-pins the view
+  // to the bottom (initial load, back-fill landing, images painting, new
+  // messages). Starts true on room open; disengages when the user scrolls
+  // up; re-engages when they return near the bottom. This makes late
+  // layout shifts (async images) harmless instead of each needing a fix.
+  const followRef = useRef(true)
+
+  // Scroll behavior on item-count change:
+  //  - after a load-older PREPEND: keep the viewport pinned to the same
+  //    message (offset scrollTop by the height the prepend added).
+  //  - otherwise (initial load / new message APPEND): follow the bottom,
+  //    but only if the user was already near it -- don't yank someone
+  //    who is reading history.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el && prependHeightRef.current !== null) {
+      el.scrollTop += el.scrollHeight - prependHeightRef.current
+      prependHeightRef.current = null
+      return
+    }
+    if (!followRef.current) return
     bottomRef.current?.scrollIntoView({ block: 'end' })
+  }, [items.length])
+
+  // Track user intent: scrolling away from the bottom disengages follow mode;
+  // returning near it re-engages. Prepend restores land away from the bottom,
+  // so they naturally leave follow off (correct: the user is reading history).
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onScroll = () => {
+      followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [])
+
+  // While following, re-pin on ANY content growth (async image paints shift
+  // layout well after the items effect has run).
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => {
+      if (followRef.current) bottomRef.current?.scrollIntoView({ block: 'end' })
+    })
+    for (const child of Array.from(el.children)) ro.observe(child)
+    return () => ro.disconnect()
   }, [items.length])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <header
+        style={{
+          padding: '10px 16px',
+          borderBottom: '1px solid rgba(128,128,128,0.25)',
+          fontWeight: 600,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <span>{room.name || room.roomId}</span>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {!atStart && (
+            <button
+              type="button"
+              onClick={() => {
+                prependHeightRef.current = scrollRef.current?.scrollHeight ?? null
+                void loadOlder()
+              }}
+              disabled={loadingOlder}
+              style={{ fontSize: 12, fontWeight: 400 }}
+            >
+              {loadingOlder ? 'Loading...' : 'Load older'}
+            </button>
+          )}
+          {onToggleThreadList && (
+            <button
+              type="button"
+              onClick={onToggleThreadList}
+              style={{ fontSize: 12, fontWeight: 400 }}
+            >
+              {threadListOpen ? 'Threads X' : 'Threads'}
+            </button>
+          )}
+        </div>
+      </header>
       <div
+        ref={scrollRef}
         style={{
           flex: 1,
           overflowY: 'auto',
@@ -30,22 +118,11 @@ export function Timeline({ room, onOpenThread }: { room: Room; onOpenThread?: (r
           color: 'var(--cpd-color-text-primary)',
         }}
       >
-        <div style={{ marginBottom: 8 }}>
-          {atStart ? (
-            <div style={{ fontSize: 12, color: 'var(--cpd-color-text-secondary)', padding: '4px 0' }}>
-              Beginning of the room.
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={loadOlder}
-              disabled={loadingOlder}
-              style={{ fontSize: 12 }}
-            >
-              {loadingOlder ? 'Loading…' : 'Load older messages'}
-            </button>
-          )}
-        </div>
+        {atStart && (
+          <div style={{ fontSize: 12, color: 'var(--cpd-color-text-secondary)', padding: '4px 0', marginBottom: 8 }}>
+            Beginning of the room.
+          </div>
+        )}
 
         {items.map((item) => (
           <Row key={item.id} item={item} onOpenThread={onOpenThread} />

@@ -108,6 +108,9 @@ export function toItems(events: MatrixEvent[]): TimelineItem[] {
   return out
 }
 
+// Depth a freshly-opened room back-fills to (sync alone delivers ~20).
+const INITIAL_SCROLLBACK = 60
+
 // Live timeline for a room: current events, live appends, and scrollback.
 export function useTimeline(client: MatrixClient | null, room: Room | null) {
   const [items, setItems] = useState<TimelineItem[]>([])
@@ -129,6 +132,18 @@ export function useTimeline(client: MatrixClient | null, room: Room | null) {
     refresh()
     setAtStart(false)
     if (!client || !room) return
+    let cancelled = false
+
+    // Deepen a shallow initial view once per room open, so a fresh room
+    // shows real history without the user clicking for it.
+    if (room.getLiveTimeline().getEvents().length < INITIAL_SCROLLBACK) {
+      client
+        .scrollback(room, INITIAL_SCROLLBACK)
+        .then(() => {
+          if (!cancelled) refresh()
+        })
+        .catch(() => {})
+    }
 
     // Fire on any timeline change in THIS room (new messages, etc.).
     const onTimeline = (_ev: MatrixEvent, evRoom: Room | undefined) => {
@@ -136,6 +151,7 @@ export function useTimeline(client: MatrixClient | null, room: Room | null) {
     }
     client.on(RoomEvent.Timeline, onTimeline)
     return () => {
+      cancelled = true
       client.off(RoomEvent.Timeline, onTimeline)
     }
   }, [client, room, refresh])

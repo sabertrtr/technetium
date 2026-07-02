@@ -15,6 +15,16 @@ const MEDIA_BASE = (
   (import.meta.env.VITE_MEDIA_BASE as string | undefined) ?? 'https://mxc.41chan.net'
 ).replace(/\/+$/, '')
 
+// In-memory cache of resolved presigned R2 URLs for ORIGINALS, keyed by mxc.
+// The presigned URL changes signature on every mint, so without this each
+// re-view (gallery left/right, timeline scrollback) is a fresh URL = a fresh
+// browser cache key = a full re-download. Reusing the same URL within its life
+// lets the browser's disk cache (immutable header on the R2 response) hit.
+// Reuse only while >60s of the presign's life remains, so <img> never gets a
+// URL about to expire mid-load.
+const REUSE_MARGIN_MS = 60 * 1000
+const originalUrlCache = new Map<string, { url: string; expiresAt: number }>()
+
 // Thumbnail widths the gateway honors (snapped server-side to its
 // ALLOWED_THUMB_SIZES). Exposed so callers pick a real size, not an arbitrary
 // one that would just get snapped anyway.
@@ -67,4 +77,54 @@ export async function fetchMediaObjectUrl(
     throw new Error(`media fetch failed (${resp.status}) for ${mxc}`)
   }
   return URL.createObjectURL(await resp.blob())
+}
+
+// Resolve an mxc to a directly-loadable <img src>.
+//
+// Two response shapes from the gateway, by request type:
+//   - ORIGINAL (no width): the gateway authorizes, then returns JSON
+//     { url } with a short-lived presigned R2 URL. We return that URL as-is;
+//     the caller loads it with a plain <img src>, which fetches bytes straight
+//     from R2 (cross-origin <img> is unrestricted; the presigned URL self-
+//     authorizes). No blob, and no CORS-on-redirect problem.
+//   - THUMBNAIL (width set): the gateway streams image bytes directly, so we
+//     fall back to the blob path.
+//
+// Returns { src, revoke }: `revoke` is a no-op for the original path (nothing
+// to free) and revokes the object URL for the thumbnail path. The caller
+// always calls revoke() on cleanup and needn't know which path ran.
+export async function fetchMediaSrc(
+  client: MatrixClient,
+  mxc: string,
+  width?: ThumbSize,
+): Promise<{ src: string; revoke: () => void }> {
+  if (width) {
+    const objUrl = await fetchMediaObjectUrl(client, mxc, width)
+    return { src: objUrl, revoke: () => URL.revokeObjectURL(objUrl) }
+  }
+
+  // Reuse a still-valid cached presigned URL so the browser cache can hit.
+  const cached = originalUrlCache.get(mxc)
+  if (cached && cached.expiresAt - Date.now() > REUSE_MARGIN_MS) {
+    return { src: cached.url, revoke: () => {} }
+  }
+
+  const url = mediaUrl(mxc)
+  if (!url) throw new Error(`invalid mxc URI: ${mxc}`)
+
+  const token = client.getAccessToken()
+  if (!token) throw new Error('no access token available for media fetch')
+
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!resp.ok) {
+    throw new Error(`media fetch failed (${resp.status}) for ${mxc}`)
+  }
+  const data = (await resp.json()) as { url?: string; expiresIn?: number }
+  if (!data.url) throw new Error(`gateway returned no url for ${mxc}`)
+  // Gateway presigns for 300s; cache with that lifetime (default if unsent).
+  const ttlMs = (data.expiresIn ?? 300) * 1000
+  originalUrlCache.set(mxc, { url: data.url, expiresAt: Date.now() + ttlMs })
+  return { src: data.url, revoke: () => {} }
 }

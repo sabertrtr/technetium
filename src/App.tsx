@@ -75,27 +75,8 @@ function App() {
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {selectedRoom ? (
           <>
-            <header
-              style={{
-                padding: '10px 16px',
-                borderBottom: '1px solid rgba(128,128,128,0.25)',
-                fontWeight: 600,
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <span>{selectedRoom.name || selectedRoom.roomId}</span>
-              <button
-                type="button"
-                onClick={() => setThreadListOpen((o) => !o)}
-                style={{ fontSize: 12, fontWeight: 400 }}
-              >
-                {threadListOpen ? 'Threads \u2715' : '\u2630 Threads'}
-              </button>
-            </header>
             <div style={{ flex: 1, minHeight: 0 }}>
-              <Timeline room={selectedRoom} onOpenThread={(roomId, rootId) => setOpenThread({ roomId, rootId })} />
+              <Timeline room={selectedRoom} onOpenThread={(roomId, rootId) => setOpenThread({ roomId, rootId })} threadListOpen={threadListOpen} onToggleThreadList={() => setThreadListOpen((o) => !o)} />
             </div>
             <Composer room={selectedRoom} />
           </>
@@ -111,6 +92,7 @@ function App() {
         <ThreadList
           onSelect={(roomId, rootId) => setOpenThread({ roomId, rootId })}
           activeRootId={openThread?.rootId}
+          roomId={selectedRoom?.roomId}
             width={threadListWidth}
         />
       )}

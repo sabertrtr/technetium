@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useClient } from '../client/ClientContext'
-import { fetchMediaObjectUrl, type ThumbSize } from '../client/media'
+import { fetchMediaSrc, type ThumbSize } from '../client/media'
 
 // Renders an mxc:// image by fetching it through the media gateway with the
 // client's bearer token and showing the resulting blob. Owns the object-URL
@@ -28,7 +28,7 @@ export function AuthedImage({
   const [error, setError] = useState(false)
   // Track the current object URL across renders so cleanup always revokes the
   // exact blob this instance created, even if mxc changes mid-flight.
-  const urlRef = useRef<string | null>(null)
+  const revokeRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (!client) return
@@ -36,15 +36,15 @@ export function AuthedImage({
     setSrc(null)
     setError(false)
 
-    fetchMediaObjectUrl(client, mxc, width)
-      .then((objUrl) => {
+    fetchMediaSrc(client, mxc, width)
+      .then(({ src: resolved, revoke }) => {
         if (cancelled) {
-          // Component moved on before the fetch resolved — revoke immediately.
-          URL.revokeObjectURL(objUrl)
+          // Component moved on before the fetch resolved — clean up immediately.
+          revoke()
           return
         }
-        urlRef.current = objUrl
-        setSrc(objUrl)
+        revokeRef.current = revoke
+        setSrc(resolved)
       })
       .catch(() => {
         if (!cancelled) setError(true)
@@ -52,9 +52,9 @@ export function AuthedImage({
 
     return () => {
       cancelled = true
-      if (urlRef.current) {
-        URL.revokeObjectURL(urlRef.current)
-        urlRef.current = null
+      if (revokeRef.current) {
+        revokeRef.current()
+        revokeRef.current = null
       }
     }
   }, [client, mxc, width])
